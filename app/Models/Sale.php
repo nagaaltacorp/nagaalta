@@ -15,19 +15,46 @@ class Sale extends Model
         'processed_by_user_id',
         'unit_type',
         'quantity',
+        'quantity_label',
+        'vat_rate',
+        'vat_amount',
+        'discount_percent',
+        'discount_amount',
         'total_price',
         'payment_method',
+        'replaces_sale_id',
+        'replaced_by_sale_id',
         'created_at',
         'updated_at',
+    ];
+
+    protected $appends = [
+        'quantity_display',
+        'is_replaced',
+        'is_replacement',
     ];
 
     protected $casts = [
         'created_at' => 'datetime',
         'updated_at' => 'datetime',
-        'quantity' => 'integer',
+        'quantity' => 'decimal:4',
+        'vat_rate' => 'decimal:2',
+        'vat_amount' => 'decimal:2',
+        'discount_percent' => 'decimal:2',
+        'discount_amount' => 'decimal:2',
         'total_price' => 'decimal:2',
         'processed_by_user_id' => 'integer',
+        'replaces_sale_id' => 'integer',
+        'replaced_by_sale_id' => 'integer',
     ];
+
+    public function getQuantityDisplayAttribute(): string
+    {
+        return \App\Support\SaleQuantity::display(
+            (float) $this->quantity,
+            $this->quantity_label,
+        );
+    }
 
     protected static function booted(): void
     {
@@ -68,6 +95,16 @@ class Sale extends Model
     private static function generateSaleNumber(int $saleId, ?string $datePart = null): string
     {
         return sprintf('SAL-%s-%06d', $datePart ?? now()->format('Ymd'), $saleId);
+    }
+
+    public function getIsReplacedAttribute(): bool
+    {
+        return $this->replaced_by_sale_id !== null;
+    }
+
+    public function getIsReplacementAttribute(): bool
+    {
+        return $this->replaces_sale_id !== null;
     }
 
     public function product(): BelongsTo

@@ -7,11 +7,15 @@ use App\Models\Inventory;
 use App\Models\Product;
 use App\Models\Sale;
 use App\Models\User;
+use App\Services\CartDiscount;
 use App\Services\ManagerBranchScope;
+use App\Support\SaleQuantity;
 use Illuminate\Database\QueryException;
+use Illuminate\Http\Exceptions\HttpResponseException;
 use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Validation\ValidationException;
 
 class SaleController extends Controller
 {
@@ -76,7 +80,7 @@ class SaleController extends Controller
         ]);
 
         $query = Sale::with([
-            'product:id,name,price,unit,category,image',
+            'product:id,name,price,unit,category,image,is_vatable,vat_rate,retail_enabled,retail_unit,retail_qty_per_unit,retail_price',
             'processedBy:id,name,user_name,email,employee_id',
             'processedBy.employee:id,branch_id,first_name,last_name',
             'processedBy.employee.branch:id,name,location',
@@ -126,12 +130,15 @@ class SaleController extends Controller
 
     private function validateSalePayload(Request $request): array
     {
-        return $request->validate([
+        $validated = $request->validate([
             'product_id' => ['required', 'exists:products,id'],
-            'quantity' => ['required', 'integer', 'min:1'],
+            'quantity' => ['required'],
             'processed_by_user_id' => ['nullable', 'exists:users,id'],
             'user_id' => ['nullable', 'exists:users,id'],
             'unit_type' => ['nullable', 'string', 'max:20'],
+            'discount_percent' => ['nullable', 'numeric', 'min:0', 'max:100'],
+            'discount_password' => ['nullable', 'string', 'max:50'],
+            'discount_token' => ['nullable', 'string', 'max:80'],
             'sale_number' => ['nullable', 'string', 'max:32'],
             'idempotency_key' => ['nullable', 'string', 'max:100'],
             'payment_method' => ['nullable', 'string', 'max:20'],
@@ -140,6 +147,19 @@ class SaleController extends Controller
             'sold_at' => ['nullable', 'date'],
             'created_at' => ['nullable', 'date'],
         ]);
+
+        [$quantity, $quantityLabel] = SaleQuantity::parse($validated['quantity']);
+
+        if ($quantity === null) {
+            throw ValidationException::withMessages([
+                'quantity' => 'Enter a valid quantity such as 1, 0.25, or 1/4.',
+            ]);
+        }
+
+        $validated['quantity'] = $quantity;
+        $validated['quantity_label'] = $quantityLabel;
+
+        return $validated;
     }
 
     private function createSale(Request $request, array $validated, bool $useClientTimestamp = false): array
@@ -159,29 +179,79 @@ class SaleController extends Controller
         }
 
         $product = Product::findOrFail($validated['product_id']);
-        $totalPrice = (float) $product->price * (int) $validated['quantity'];
+        $quantity = SaleQuantity::round((float) $validated['quantity']);
         $unitType = $this->resolveUnitType(
             $validated['unit_type'] ?? null,
             $product->unit ?? null,
         );
 
+        if ($product->saleNeedsRetailSetup($unitType)) {
+            $wholesaleUnit = $product->unit ?: 'unit';
+            $saleUnit = $unitType ?: 'retail';
+            $retailUnit = $product->retail_unit ?: 'retail unit';
+
+            $message = $product->retail_enabled
+                ? "This sale uses {$saleUnit}, but retail is set to {$retailUnit} per {$wholesaleUnit}."
+                : "Set up retail for this product first (how many {$saleUnit} are in 1 {$wholesaleUnit}).";
+
+            throw new HttpResponseException(response()->json([
+                'message' => $message,
+            ], 422));
+        }
+
+        if ($product->saleUsesRetailConversion($unitType) && $product->retail_price === null) {
+            $retailUnit = $product->retail_unit ?: 'retail unit';
+
+            throw new HttpResponseException(response()->json([
+                'message' => "Set a retail price per {$retailUnit} in Retail Setup before selling this product that way.",
+            ], 422));
+        }
+
+        if (!$product->saleUsesRetailConversion($unitType) && !SaleQuantity::isWhole($quantity)) {
+            $retailUnit = $product->retail_unit ?: 'kg';
+
+            throw new HttpResponseException(response()->json([
+                'message' => "Wholesale sales must be whole units. Sell fractions such as 1/4 {$retailUnit} from the retail screen.",
+            ], 422));
+        }
+
+        $subtotal = $product->unitPriceForSale($unitType) * $quantity;
+        $vatRate = $product->resolveVatRate();
+        $vatAmount = $product->vatAmountForSale($quantity, $unitType);
+        $totalPrice = round($subtotal + $vatAmount, 2);
+
+        $ticketSaleNumber = $requestedSaleNumber;
+
+        if ($ticketSaleNumber === null && $useClientTimestamp && $clientProcessedAt !== null) {
+            $ticketSaleNumber = $this->findGroupedSaleNumber($processedByUserId, $clientProcessedAt);
+        }
+
+        $discountPercent = CartDiscount::normalizePercent($validated['discount_percent'] ?? 0);
+        CartDiscount::assertSamePercentOnTicket($ticketSaleNumber, $discountPercent);
+        CartDiscount::authorize(
+            $discountPercent,
+            $validated['discount_password'] ?? null,
+            $validated['discount_token'] ?? null,
+        );
+        $discount = CartDiscount::applyToTotal($totalPrice, $discountPercent);
+        $totalPrice = $discount['total'];
+
         $attributes = [
             'product_id' => $product->id,
             'processed_by_user_id' => $processedByUserId,
             'unit_type' => $unitType,
-            'quantity' => $validated['quantity'],
+            'quantity' => $quantity,
+            'quantity_label' => $validated['quantity_label'] ?? null,
+            'vat_rate' => $vatRate,
+            'vat_amount' => $vatAmount,
+            'discount_percent' => $discount['percent'],
+            'discount_amount' => $discount['amount'],
             'total_price' => $totalPrice,
             'payment_method' => $validated['payment_method'] ?? 'cash',
         ];
 
-        if ($requestedSaleNumber !== null) {
-            $attributes['sale_number'] = $requestedSaleNumber;
-        } elseif ($useClientTimestamp && $clientProcessedAt !== null) {
-            $groupedSaleNumber = $this->findGroupedSaleNumber($processedByUserId, $clientProcessedAt);
-
-            if ($groupedSaleNumber !== null) {
-                $attributes['sale_number'] = $groupedSaleNumber;
-            }
+        if ($ticketSaleNumber !== null) {
+            $attributes['sale_number'] = $ticketSaleNumber;
         }
 
         if ($idempotencyKey !== null) {
@@ -244,6 +314,8 @@ class SaleController extends Controller
             return;
         }
 
+        $sale->loadMissing('product');
+
         $inventory = Inventory::query()
             ->where('branch_id', $branchId)
             ->where('product_id', $sale->product_id)
@@ -252,14 +324,68 @@ class SaleController extends Controller
             ->first();
 
         if (!$inventory) {
+            if ($sale->product?->saleUsesRetailConversion($sale->unit_type)) {
+                throw new HttpResponseException(response()->json([
+                    'message' => 'No branch inventory found for this product.',
+                ], 422));
+            }
+
             return;
         }
 
-        $newQty = max(0, (int) $inventory->quantity - (int) $sale->quantity);
+        $product = $sale->product ?? Product::find($sale->product_id);
+
+        if ($product && $product->saleUsesRetailConversion($sale->unit_type)) {
+            $this->decrementRetailInventory($inventory, $product, (float) $sale->quantity);
+
+            return;
+        }
+
+        $newQty = max(0, (int) $inventory->quantity - (int) round((float) $sale->quantity));
+        $remainder = (float) ($inventory->retail_remainder ?? 0);
 
         $inventory->update([
             'quantity' => $newQty,
-            'status' => $newQty === 0 ? 'out_of_stock' : $inventory->status,
+            'status' => $newQty === 0 && SaleQuantity::isZero($remainder) ? 'out_of_stock' : 'in_stock',
+        ]);
+    }
+
+    private function decrementRetailInventory(Inventory $inventory, Product $product, float $qtyToSell): void
+    {
+        $kgPerUnit = (int) $product->retail_qty_per_unit;
+        $retailUnit = $product->retail_unit ?: 'kg';
+        $qtyToSell = SaleQuantity::round($qtyToSell);
+
+        if ($kgPerUnit <= 0) {
+            throw new HttpResponseException(response()->json([
+                'message' => 'This product is missing retail quantity per wholesale unit in Retail Setup.',
+            ], 422));
+        }
+
+        $sacks = (int) $inventory->quantity;
+        $remainder = SaleQuantity::round((float) ($inventory->retail_remainder ?? 0));
+        $available = $product->availableRetailQuantity($sacks, $remainder);
+
+        if ($qtyToSell > $available + 0.00005) {
+            throw new HttpResponseException(response()->json([
+                'message' => 'Not enough retail stock after allowed display loss. Available to sell: '.SaleQuantity::display($available)." {$retailUnit}.",
+            ], 422));
+        }
+
+        $fromRemainder = min($remainder, $qtyToSell);
+        $remainder = SaleQuantity::round($remainder - $fromRemainder);
+        $stillNeeded = SaleQuantity::round($qtyToSell - $fromRemainder);
+
+        if ($stillNeeded > 0.00005) {
+            $unitsToOpen = (int) ceil($stillNeeded / $kgPerUnit - 0.0000001);
+            $sacks -= $unitsToOpen;
+            $remainder = SaleQuantity::round(($unitsToOpen * $kgPerUnit) - $stillNeeded + $remainder);
+        }
+
+        $inventory->update([
+            'quantity' => $sacks,
+            'retail_remainder' => max(0, $remainder),
+            'status' => $sacks === 0 && SaleQuantity::isZero($remainder) ? 'out_of_stock' : 'in_stock',
         ]);
     }
 

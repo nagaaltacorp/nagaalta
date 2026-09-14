@@ -21,7 +21,6 @@ import {
 } from "vue";
 import AppLayout from "../components/layout/AppLayout.vue";
 import Button from "../components/ui/Button.vue";
-import Card from "../components/ui/Card.vue";
 import Input from "../components/ui/Input.vue";
 import Modal from "../components/ui/Modal.vue";
 import Table from "../components/ui/Table.vue";
@@ -335,8 +334,9 @@ onMounted(async () => {
 
     <AppLayout title="Employees">
         <div class="products-page employees-page">
-            <Card title="Employee Management">
-                <div class="products-toolbar">
+            <section class="dashboard-surface-card">
+            <h2 class="panel-title">Employees</h2>
+            <div class="products-toolbar">
                     <div class="products-controls">
                         <label
                             class="products-control products-control--search"
@@ -485,8 +485,8 @@ onMounted(async () => {
                         </button>
                     </div>
                 </div>
-            </Card>
 
+            </section>
             <Modal
                 :open="showModal"
                 :title="editingId ? 'Edit Employee' : 'Create Employee'"

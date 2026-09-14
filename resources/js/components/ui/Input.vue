@@ -22,8 +22,13 @@ const emit = defineEmits(["update:modelValue"]);
 </script>
 
 <template>
-    <label class="form-field">
-        <span v-if="label" class="form-field__label">{{ label }}</span>
+    <label class="grid gap-1.5">
+        <span
+            v-if="label"
+            class="text-xs font-bold text-green-900"
+        >
+            {{ label }}
+        </span>
         <input
             class="input"
             :type="type"

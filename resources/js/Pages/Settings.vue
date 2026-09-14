@@ -3,7 +3,6 @@ import { Head } from "@inertiajs/vue3";
 import { onMounted, reactive } from "vue";
 import AppLayout from "../components/layout/AppLayout.vue";
 import Button from "../components/ui/Button.vue";
-import Card from "../components/ui/Card.vue";
 import Input from "../components/ui/Input.vue";
 import api from "../services/api";
 
@@ -40,8 +39,9 @@ onMounted(loadSettings);
     <Head title="Settings" />
 
     <AppLayout title="Settings">
-        <Card title="System Settings">
-            <form class="form-grid" @submit.prevent="saveSettings">
+        <section class="dashboard-surface-card">
+        <h2 class="panel-title">System Settings</h2>
+        <form class="form-grid" @submit.prevent="saveSettings">
                 <Input v-model="form.company_name" label="Company Name" />
                 <Input
                     v-model="form.support_email"
@@ -59,6 +59,6 @@ onMounted(loadSettings);
                     <Button type="submit">Save Settings</Button>
                 </div>
             </form>
-        </Card>
+        </section>
     </AppLayout>
 </template>

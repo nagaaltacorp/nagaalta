@@ -2,7 +2,6 @@
 import { Head } from "@inertiajs/vue3";
 import { computed, onMounted, onUnmounted, ref } from "vue";
 import AppLayout from "../components/layout/AppLayout.vue";
-import Card from "../components/ui/Card.vue";
 import Table from "../components/ui/Table.vue";
 import api from "../services/api";
 
@@ -63,15 +62,18 @@ const filteredSales = computed(() => {
             return true;
         }
 
-        const searchable = [
-            sale.sale_number,
-            sale.product?.name,
-            getUnitTypeLabel(sale),
-            String(sale.quantity ?? ""),
-            Number(sale.total_price ?? 0).toFixed(2),
-            getProcessedBy(sale),
-            createdAt ? createdAt.toLocaleString() : "",
-        ]
+                        const searchable = [
+                            sale.sale_number,
+                            sale.product?.name,
+                            getUnitTypeLabel(sale),
+                            String(sale.quantity ?? ""),
+                            Number(sale.total_price ?? 0).toFixed(2),
+                            Number(sale.discount_percent ?? 0) > 0
+                                ? `${Number(sale.discount_percent).toFixed(2)}%`
+                                : "",
+                            getProcessedBy(sale),
+                            createdAt ? createdAt.toLocaleString() : "",
+                        ]
             .join(" ")
             .toLowerCase();
 
@@ -147,8 +149,9 @@ onUnmounted(() => {
 
     <AppLayout title="Sales Report">
         <section class="sales-report-page">
-            <Card class="sales-report-card" title="Sales Listing">
-                <div class="sales-report-filters">
+            <section class="dashboard-surface-card">
+            <h2 class="panel-title">Sales Listing</h2>
+            <div class="sales-report-filters">
                     <div class="sales-report-filters__group">
                         <label
                             class="sales-report-filter sales-report-filter--search"
@@ -199,22 +202,52 @@ onUnmounted(() => {
                         'Product',
                         'Unit Type',
                         'Quantity',
+                        'VAT',
+                        'Discount',
                         'Total Price',
                         'Processed By',
                         'Date',
                     ]"
                 >
                     <tr v-if="!filteredSales.length">
-                        <td colspan="7" class="sales-report-empty">
+                        <td colspan="9" class="sales-report-empty">
                             No sales match your filters.
                         </td>
                     </tr>
 
                     <tr v-for="sale in filteredSales" :key="sale.id">
                         <td>{{ sale.sale_number || "-" }}</td>
-                        <td>{{ sale.product?.name || "-" }}</td>
+                        <td>
+                            {{ sale.product?.name || "-" }}
+                            <span
+                                v-if="sale.is_replacement"
+                                class="sales-report-flag"
+                            >
+                                Replacement
+                            </span>
+                            <span
+                                v-else-if="sale.is_replaced"
+                                class="sales-report-flag sales-report-flag--muted"
+                            >
+                                Replaced
+                            </span>
+                        </td>
                         <td>{{ getUnitTypeLabel(sale) }}</td>
-                        <td>{{ sale.quantity }}</td>
+                        <td>{{ sale.quantity_display || sale.quantity }}</td>
+                        <td>
+                            {{
+                                Number(sale.vat_amount || 0) > 0
+                                    ? `${Number(sale.vat_rate || 0).toFixed(2)}% (₱ ${Number(sale.vat_amount).toFixed(2)})`
+                                    : "-"
+                            }}
+                        </td>
+                        <td>
+                            {{
+                                Number(sale.discount_percent || 0) > 0
+                                    ? `${Number(sale.discount_percent).toFixed(2)}% (₱ ${Number(sale.discount_amount || 0).toFixed(2)})`
+                                    : "-"
+                            }}
+                        </td>
                         <td>{{ Number(sale.total_price).toFixed(2) }}</td>
                         <td>{{ getProcessedBy(sale) }}</td>
                         <td>
@@ -226,7 +259,7 @@ onUnmounted(() => {
                 <div class="report-total">
                     Grand Total: {{ total.toFixed(2) }}
                 </div>
-            </Card>
+            </section>
         </section>
     </AppLayout>
 </template>

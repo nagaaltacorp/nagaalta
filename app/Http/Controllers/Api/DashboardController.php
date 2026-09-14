@@ -468,7 +468,8 @@ class DashboardController extends Controller
                     'id' => (int) $sale->id,
                     'sale_number' => (string) ($sale->sale_number ?: 'N/A'),
                     'product_name' => (string) ($sale->product?->name ?: 'Unknown product'),
-                    'quantity' => (int) $sale->quantity,
+                    'quantity' => (float) $sale->quantity,
+                    'quantity_display' => $sale->quantity_display,
                     'total_price' => round((float) $sale->total_price, 2),
                     'processed_by' => $processorName,
                     'sold_at' => $sale->created_at?->toDateTimeString(),
@@ -508,9 +509,9 @@ class DashboardController extends Controller
         }
 
         $topRows = $rows->take(4);
-        $otherQuantity = (int) $rows
+        $otherQuantity = (float) $rows
             ->slice(4)
-            ->sum(fn ($row) => (int) $row->total_quantity);
+            ->sum(fn ($row) => (float) $row->total_quantity);
 
         $labels = $topRows
             ->map(fn ($row) => (string) ($row->product_name ?: 'Unknown product'))
@@ -518,7 +519,7 @@ class DashboardController extends Controller
             ->all();
 
         $series = $topRows
-            ->map(fn ($row) => (int) $row->total_quantity)
+            ->map(fn ($row) => (float) $row->total_quantity)
             ->values()
             ->all();
 
@@ -530,7 +531,7 @@ class DashboardController extends Controller
         return [
             'labels' => $labels,
             'series' => $series,
-            'total_quantity' => (int) array_sum($series),
+            'total_quantity' => round((float) array_sum($series), 4),
         ];
     }
 }

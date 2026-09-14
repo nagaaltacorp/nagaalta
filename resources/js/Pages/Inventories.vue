@@ -1,15 +1,14 @@
 <script setup>
-import { Head, usePage } from "@inertiajs/vue3";
-import { Filter, Search, SquarePen, Trash2 } from "lucide-vue-next";
+import { Head, Link, usePage } from "@inertiajs/vue3";
+import { Eye, Filter, Search, SquarePen, Trash2, TriangleAlert } from "lucide-vue-next";
 import { computed, onBeforeUnmount, onMounted, reactive, ref } from "vue";
 import { toast } from "vue-sonner";
 import AppLayout from "../components/layout/AppLayout.vue";
 import Button from "../components/ui/Button.vue";
-import Card from "../components/ui/Card.vue";
-import Input from "../components/ui/Input.vue";
 import Modal from "../components/ui/Modal.vue";
 import Table from "../components/ui/Table.vue";
 import api from "../services/api";
+import { displayQuantity, parseQuantity } from "../utils/quantity";
 
 const page = usePage();
 
@@ -20,9 +19,13 @@ const canAdjustInventory = computed(() => {
 
 const inventories = ref([]);
 const revenueLogs = ref([]);
-const products = ref([]);
+const mainStock = ref([]);
 const branches = ref([]);
 const showModal = ref(false);
+const showDeleteModal = ref(false);
+const showViewModal = ref(false);
+const pendingDeleteItem = ref(null);
+const viewingItem = ref(null);
 const searchQuery = ref("");
 const branchFilter = ref("all");
 const statusFilter = ref("all");
@@ -44,13 +47,13 @@ const loadData = async () => {
         await Promise.all([
             api.get("/inventories"),
             api.get("/inventories/revenue-logs"),
-            api.get("/products"),
+            api.get("/inventories/main"),
             api.get("/branches"),
         ]);
 
     inventories.value = inventoriesRes.data.data;
     revenueLogs.value = logsRes.data.data;
-    products.value = productsRes.data.data;
+    mainStock.value = productsRes.data.data ?? [];
     branches.value = branchesRes.data.data;
 };
 
@@ -62,15 +65,16 @@ const refreshInventories = async () => {
     isPolling.value = true;
 
     try {
-        const requests = [api.get("/inventories")];
+        const requests = [api.get("/inventories"), api.get("/inventories/main")];
 
         if (showRevenueLogs.value) {
             requests.push(api.get("/inventories/revenue-logs"));
         }
 
-        const [inventoriesRes, logsRes] = await Promise.all(requests);
+        const [inventoriesRes, mainRes, logsRes] = await Promise.all(requests);
 
         inventories.value = inventoriesRes.data.data;
+        mainStock.value = mainRes.data.data ?? [];
 
         if (logsRes?.data?.data) {
             revenueLogs.value = logsRes.data.data;
@@ -79,6 +83,50 @@ const refreshInventories = async () => {
         isPolling.value = false;
     }
 };
+
+const catalogProducts = computed(() =>
+    [...mainStock.value]
+        .filter((item) => item.product)
+        .sort((a, b) =>
+            String(a.product.name || "").localeCompare(
+                String(b.product.name || ""),
+            ),
+        )
+        .map((item) => ({
+            id: item.product.id,
+            name: item.product.name,
+            unit: item.product.unit,
+            available_quantity: Number(item.quantity || 0),
+        })),
+);
+
+const availableMainQuantity = computed(() => {
+    const productId = Number(form.product_id);
+
+    if (!productId) {
+        return 0;
+    }
+
+    const mainItem = mainStock.value.find(
+        (item) => Number(item.product_id) === productId,
+    );
+    let available = Number(mainItem?.quantity || 0);
+
+    if (editingId.value) {
+        const current = inventories.value.find(
+            (item) => item.id === editingId.value,
+        );
+        const currentProductId = Number(
+            current?.product?.id ?? current?.product_id,
+        );
+
+        if (current && currentProductId === productId) {
+            available += Number(current.quantity || 0);
+        }
+    }
+
+    return available;
+});
 
 const branchOptions = computed(() =>
     [...branches.value].sort((a, b) => a.name.localeCompare(b.name)),
@@ -100,6 +148,101 @@ const formatStatusLabel = (status) =>
     String(status)
         .replace(/_/g, " ")
         .replace(/\b\w/g, (match) => match.toUpperCase());
+
+const quantityNotes = (item) => {
+    if (!item.product?.retail_enabled) {
+        return [];
+    }
+
+    const retailUnit = item.product?.retail_unit || "kg";
+    const leftover = Number(item.retail_remainder || 0);
+    const cannotSell = parseQuantity(item.product?.retail_allowed_loss) ?? 0;
+    const notes = [];
+
+    if (leftover > 0) {
+        notes.push({
+            key: "leftover",
+            text: `Leftover ${displayQuantity(leftover)} ${retailUnit}`,
+        });
+    }
+
+    if (cannotSell > 0) {
+        notes.push({
+            key: "loss",
+            text: `Cannot sell ${displayQuantity(cannotSell)} ${retailUnit}`,
+        });
+    }
+
+    return notes;
+};
+
+const formatCurrency = (value) =>
+    Number(value || 0).toLocaleString(undefined, {
+        minimumFractionDigits: 2,
+        maximumFractionDigits: 2,
+    });
+
+const openView = (item) => {
+    viewingItem.value = item;
+    showViewModal.value = true;
+};
+
+const closeView = () => {
+    showViewModal.value = false;
+    viewingItem.value = null;
+};
+
+const viewDetails = computed(() => {
+    const item = viewingItem.value;
+    const product = item?.product;
+
+    if (!item || !product) {
+        return null;
+    }
+
+    const wholesaleUnit = product.unit || "unit";
+    const retailUnit = product.retail_unit || "kg";
+    const qtyPer = Number(product.retail_qty_per_unit) || 0;
+    const wholesalePrice = Number(product.price) || 0;
+    const retailPrice = Number(product.retail_price) || 0;
+    const enabled = Boolean(product.retail_enabled) && qtyPer > 0;
+    const qty = Number(item.quantity) || 0;
+    const remainder = Number(item.retail_remainder) || 0;
+    const retailTotal = enabled ? qty * qtyPer + remainder : 0;
+    const allowedLoss = enabled
+        ? Math.max(0, parseQuantity(product.retail_allowed_loss) ?? 0)
+        : 0;
+    const sellableRetail = Math.max(0, retailTotal - allowedLoss);
+
+    return {
+        item,
+        product,
+        wholesaleUnit,
+        retailUnit,
+        qtyPer,
+        wholesalePrice,
+        retailPrice,
+        enabled,
+        qty,
+        remainder,
+        retailTotal,
+        allowedLoss: displayQuantity(allowedLoss),
+        sellableRetail: displayQuantity(sellableRetail),
+        conversion: enabled ? `1 ${wholesaleUnit} = ${qtyPer} ${retailUnit}` : "—",
+        reverse: enabled
+            ? `1 ${retailUnit} = ${(1 / qtyPer).toFixed(4)} ${wholesaleUnit}`
+            : "—",
+        examples: enabled
+            ? [
+                  `1 ${wholesaleUnit} = ${qtyPer} ${retailUnit}`,
+                  `2 ${wholesaleUnit} = ${qtyPer * 2} ${retailUnit}`,
+                  `5 ${wholesaleUnit} = ${qtyPer * 5} ${retailUnit}`,
+                  `1 ${retailUnit} deducts 1/${qtyPer} ${wholesaleUnit}`,
+              ]
+            : [],
+        equivalentWholesaleValue: enabled ? retailPrice * qtyPer : 0,
+    };
+});
 
 const formatActionLabel = (action) => {
     if (!action) {
@@ -163,6 +306,17 @@ const filteredInventories = computed(() => {
         return haystack.includes(query);
     });
 });
+
+const inventoryColumns = [
+    "Product",
+    "Category",
+    "Unit",
+    "Batch",
+    "Price",
+    "Quantity",
+    "Status",
+    "Actions",
+];
 
 const groupedInventories = computed(() => {
     const groups = new Map();
@@ -259,6 +413,11 @@ const resetForm = () => {
 
 const openCreate = () => {
     resetForm();
+
+    if (branchFilter.value !== "all") {
+        form.branch_id = branchFilter.value;
+    }
+
     showModal.value = true;
 };
 
@@ -294,7 +453,9 @@ const saveInventory = async () => {
         resetForm();
         await loadData();
         toast.success(
-            wasEditing ? "Inventory updated." : "Stock adjustment saved.",
+            wasEditing
+                ? "Inventory updated. Main Inventory stock adjusted."
+                : "Stock transferred from Main Inventory.",
         );
     } catch (err) {
         toast.error(err.response?.data?.message ?? "Failed to save inventory.");
@@ -303,17 +464,34 @@ const saveInventory = async () => {
     }
 };
 
-const deleteInventory = async (item) => {
-    if (!item?.id) {
+const requestDelete = (item) => {
+    pendingDeleteItem.value = item;
+    showDeleteModal.value = true;
+};
+
+const closeDeleteModal = () => {
+    showDeleteModal.value = false;
+    pendingDeleteItem.value = null;
+};
+
+const confirmDelete = async () => {
+    if (!pendingDeleteItem.value?.id) {
+        closeDeleteModal();
         return;
     }
 
-    if (!window.confirm("Delete this inventory record?")) {
-        return;
+    try {
+        await api.delete(`/inventories/${pendingDeleteItem.value.id}`);
+        closeDeleteModal();
+        await loadData();
+        toast.success(
+            "Inventory deleted. Quantity returned to Main Inventory.",
+        );
+    } catch (err) {
+        toast.error(
+            err.response?.data?.message ?? "Failed to delete inventory.",
+        );
     }
-
-    await api.delete(`/inventories/${item.id}`);
-    await loadData();
 };
 
 onMounted(() => {
@@ -330,12 +508,13 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-    <Head title="Inventories" />
+    <Head title="Branch Inventory" />
 
-    <AppLayout title="Inventories">
+    <AppLayout title="Branch Inventory">
         <div class="products-page inventories-page">
-            <Card title="Inventory Management">
-                <div class="products-toolbar">
+            <section class="dashboard-surface-card">
+            <h2 class="panel-title">Branch Inventory</h2>
+            <div class="products-toolbar">
                     <div class="products-controls">
                         <label
                             class="products-control products-control--search"
@@ -345,7 +524,7 @@ onBeforeUnmount(() => {
                                 v-model="searchQuery"
                                 class="input"
                                 type="text"
-                                placeholder="Search product, branch, status"
+                                placeholder="Search product, batch, status"
                             />
                         </label>
 
@@ -394,48 +573,45 @@ onBeforeUnmount(() => {
                             class="products-add-btn"
                             @click="openCreate"
                         >
-                            Stock adjustment
+                            Add stock
                         </Button>
                     </div>
                 </div>
 
                 <Table
-                    :columns="[
-                        'Product',
-                        'Category',
-                        'Unit',
-                        'Batch',
-                        'Price',
-                        'Quantity',
-                        'Status',
-                        'Actions',
-                    ]"
+                    v-if="groupedInventories.length === 0"
+                    :columns="inventoryColumns"
                 >
-                    <tr v-if="groupedInventories.length === 0">
+                    <tr>
                         <td class="products-empty" colspan="8">
                             No inventory matches your search/filters.
                         </td>
                     </tr>
-                    <template
-                        v-for="group in groupedInventories"
-                        :key="group.key"
-                    >
-                        <tr class="inventory-group-row">
-                            <td class="inventory-group-cell" colspan="8">
-                                <span class="inventory-group-title">
-                                    {{ group.name }}
-                                </span>
-                                <span
-                                    v-if="group.location"
-                                    class="inventory-group-location"
-                                >
-                                    {{ group.location }}
-                                </span>
-                                <span class="inventory-group-count">
-                                    {{ group.items.length }} items
-                                </span>
-                            </td>
-                        </tr>
+                </Table>
+
+                <section
+                    v-for="group in groupedInventories"
+                    :key="group.key"
+                    class="inventory-branch"
+                >
+                    <header class="inventory-branch__head">
+                        <div>
+                            <h4 class="inventory-branch__title">
+                                {{ group.name }}
+                            </h4>
+                            <p
+                                v-if="group.location"
+                                class="inventory-branch__meta"
+                            >
+                                {{ group.location }}
+                            </p>
+                        </div>
+                        <span class="inventory-branch__count">
+                            {{ group.items.length }} products
+                        </span>
+                    </header>
+
+                    <Table :columns="inventoryColumns">
                         <tr v-for="item in group.items" :key="item.id">
                             <td>
                                 <div class="inventory-product">
@@ -471,9 +647,34 @@ onBeforeUnmount(() => {
                             <td>{{ item.product?.unit || "-" }}</td>
                             <td>{{ item.batch_number || "-" }}</td>
                             <td>{{ item.product?.price ?? "-" }}</td>
-                            <td>{{ item.quantity }}</td>
-                            <td>{{ item.status }}</td>
+                            <td>
+                                <div class="inventory-qty">
+                                    <span class="inventory-qty__main">
+                                        {{ item.quantity }}
+                                    </span>
+                                    <span
+                                        v-for="note in quantityNotes(item)"
+                                        :key="note.key"
+                                        class="inventory-qty__note"
+                                        :class="{
+                                            'inventory-qty__note--loss':
+                                                note.key === 'loss',
+                                        }"
+                                    >
+                                        {{ note.text }}
+                                    </span>
+                                </div>
+                            </td>
+                            <td>{{ formatStatusLabel(item.status) }}</td>
                             <td class="actions">
+                                <Button
+                                    variant="outline"
+                                    class="products-action-btn"
+                                    @click="openView(item)"
+                                >
+                                    <Eye class="products-btn-icon" />
+                                    <span>View</span>
+                                </Button>
                                 <Button
                                     variant="outline"
                                     class="products-action-btn"
@@ -485,20 +686,20 @@ onBeforeUnmount(() => {
                                 <Button
                                     variant="danger"
                                     class="products-action-btn products-action-btn--danger"
-                                    @click="deleteInventory(item)"
+                                    @click="requestDelete(item)"
                                 >
                                     <Trash2 class="products-btn-icon" />
                                     <span>Delete</span>
                                 </Button>
                             </td>
                         </tr>
-                    </template>
-                </Table>
-            </Card>
+                    </Table>
+                </section>
 
+            </section>
             <Modal
                 :open="showModal"
-                :title="editingId ? 'Edit Inventory' : 'Stock adjustment'"
+                :title="editingId ? 'Edit Inventory' : 'Add stock'"
                 @close="showModal = false"
             >
                 <form class="form-grid" @submit.prevent="saveInventory">
@@ -516,15 +717,24 @@ onBeforeUnmount(() => {
                         </select>
                     </label>
                     <label class="form-field">
-                        <span class="form-field__label">Product</span>
+                        <span class="form-field__label">
+                            Product (Main Inventory)
+                        </span>
                         <select
                             v-model="form.product_id"
                             class="input"
                             required
+                            :disabled="catalogProducts.length === 0"
                         >
-                            <option value="">Select product</option>
+                            <option value="">
+                                {{
+                                    catalogProducts.length === 0
+                                        ? "No products in Main Inventory"
+                                        : "Select a product from Main Inventory"
+                                }}
+                            </option>
                             <option
-                                v-for="product in products"
+                                v-for="product in catalogProducts"
                                 :key="product.id"
                                 :value="product.id"
                             >
@@ -532,22 +742,269 @@ onBeforeUnmount(() => {
                                 <template v-if="product.unit">
                                     ({{ product.unit }})
                                 </template>
+                                — {{ product.available_quantity }} available
                             </option>
                         </select>
+                        <p class="form-hint">
+                            Quantity added here is deducted from
+                            <Link href="/main-inventory">Main Inventory</Link>.
+                        </p>
                     </label>
-                    <Input
-                        v-model="form.quantity"
-                        type="number"
-                        label="Quantity"
-                    />
+                    <label class="form-field">
+                        <span class="form-field__label">Quantity</span>
+                        <input
+                            v-model="form.quantity"
+                            class="input"
+                            type="number"
+                            min="0"
+                            :max="availableMainQuantity"
+                            placeholder="0"
+                            required
+                        />
+                        <p v-if="form.product_id" class="form-hint">
+                            Available in Main Inventory:
+                            {{ availableMainQuantity }}
+                        </p>
+                    </label>
                     <div class="form-actions">
-                        <Button type="submit" :disabled="isSaving">
+                        <Button
+                            type="submit"
+                            :disabled="
+                                isSaving ||
+                                catalogProducts.length === 0 ||
+                                Number(form.quantity) >
+                                    availableMainQuantity
+                            "
+                        >
                             {{ isSaving ? "Saving..." : "Save" }}
                         </Button>
                     </div>
                 </form>
             </Modal>
+
+            <Modal
+                :open="showDeleteModal"
+                title="Delete Inventory"
+                @close="closeDeleteModal"
+            >
+                <div class="products-delete-confirm">
+                    <div class="products-delete-confirm__head">
+                        <TriangleAlert class="products-delete-confirm__icon" />
+                        <p class="products-delete-confirm__title">
+                            Delete this inventory record?
+                        </p>
+                    </div>
+
+                    <p class="products-delete-confirm__text">
+                        Product:
+                        <strong>
+                            {{ pendingDeleteItem?.product?.name || "-" }}
+                        </strong>
+                    </p>
+                    <p class="products-delete-confirm__text">
+                        Quantity
+                        <strong>
+                            {{ pendingDeleteItem?.quantity ?? 0 }}
+                        </strong>
+                        will be returned to Main Inventory. This action cannot
+                        be undone.
+                    </p>
+
+                    <div class="form-actions products-delete-confirm__actions">
+                        <Button
+                            type="button"
+                            variant="outline"
+                            @click="closeDeleteModal"
+                        >
+                            Cancel
+                        </Button>
+                        <Button
+                            type="button"
+                            variant="danger"
+                            @click="confirmDelete"
+                        >
+                            Delete
+                        </Button>
+                    </div>
+                </div>
+            </Modal>
         </div>
+
+        <Modal
+            :open="showViewModal"
+            :title="viewingItem?.product?.name || 'Product details'"
+            @close="closeView"
+        >
+            <div v-if="viewDetails" class="retail-view">
+                <div class="retail-view__hero">
+                    <img
+                        v-if="viewDetails.product.image"
+                        :src="viewDetails.product.image"
+                        :alt="viewDetails.product.name"
+                        class="retail-view__image"
+                    />
+                    <div
+                        v-else
+                        class="retail-view__image retail-view__image--empty"
+                    >
+                        No image
+                    </div>
+                    <div class="retail-view__identity">
+                        <p class="retail-view__name">
+                            {{ viewDetails.product.name }}
+                        </p>
+                        <p class="retail-view__meta">
+                            {{ viewDetails.product.category || "Uncategorized" }}
+                            · {{ viewingItem.branch?.name || "Unassigned" }}
+                        </p>
+                        <p
+                            class="retail-view__status"
+                            :class="{
+                                'retail-view__status--on': viewDetails.enabled,
+                            }"
+                        >
+                            {{
+                                viewDetails.enabled
+                                    ? "Retail enabled"
+                                    : "Retail not set up"
+                            }}
+                        </p>
+                    </div>
+                </div>
+
+                <div class="retail-view__grid">
+                    <div class="retail-view__item">
+                        <span>Wholesale unit</span>
+                        <strong>{{ viewDetails.wholesaleUnit }}</strong>
+                    </div>
+                    <div class="retail-view__item">
+                        <span>Wholesale price</span>
+                        <strong>
+                            ₱{{ formatCurrency(viewDetails.wholesalePrice) }}
+                            / {{ viewDetails.wholesaleUnit }}
+                        </strong>
+                    </div>
+                    <div class="retail-view__item">
+                        <span>Batch</span>
+                        <strong>{{ viewingItem.batch_number || "-" }}</strong>
+                    </div>
+                    <div class="retail-view__item">
+                        <span>Status</span>
+                        <strong>
+                            {{ formatStatusLabel(viewingItem.status) }}
+                        </strong>
+                    </div>
+                    <div class="retail-view__item">
+                        <span>Retail unit</span>
+                        <strong>{{ viewDetails.retailUnit }}</strong>
+                    </div>
+                    <div class="retail-view__item">
+                        <span>Retail price</span>
+                        <strong>
+                            ₱{{ formatCurrency(viewDetails.retailPrice) }}
+                            / {{ viewDetails.retailUnit }}
+                        </strong>
+                    </div>
+                </div>
+
+                <section class="retail-view__section">
+                    <h4>Actual conversion</h4>
+                    <p class="retail-view__conversion">
+                        {{ viewDetails.conversion }}
+                    </p>
+                    <p v-if="viewDetails.enabled" class="retail-view__reverse">
+                        {{ viewDetails.reverse }}
+                    </p>
+                    <ul
+                        v-if="viewDetails.examples.length"
+                        class="retail-view__list"
+                    >
+                        <li
+                            v-for="example in viewDetails.examples"
+                            :key="example"
+                        >
+                            {{ example }}
+                        </li>
+                    </ul>
+                    <p
+                        v-if="viewDetails.enabled && viewDetails.retailPrice"
+                        class="retail-view__note"
+                    >
+                        {{ viewDetails.qtyPer }}
+                        {{ viewDetails.retailUnit }} at ₱{{
+                            formatCurrency(viewDetails.retailPrice)
+                        }}
+                        each = ₱{{
+                            formatCurrency(viewDetails.equivalentWholesaleValue)
+                        }}
+                        (wholesale is ₱{{
+                            formatCurrency(viewDetails.wholesalePrice)
+                        }}
+                        / {{ viewDetails.wholesaleUnit }})
+                    </p>
+                    <p v-else-if="!viewDetails.enabled" class="retail-view__empty">
+                        Set this product up in Retail Setup to see unit
+                        conversion.
+                    </p>
+                </section>
+
+                <section class="retail-view__section">
+                    <h4>This branch stock</h4>
+                    <div class="retail-view__grid">
+                        <div class="retail-view__item">
+                            <span>Wholesale quantity</span>
+                            <strong>
+                                {{ viewDetails.qty }}
+                                {{ viewDetails.wholesaleUnit }}
+                            </strong>
+                        </div>
+                        <div class="retail-view__item">
+                            <span>Leftover from opened sack</span>
+                            <strong>
+                                {{ displayQuantity(viewDetails.remainder) }}
+                                {{ viewDetails.retailUnit }}
+                            </strong>
+                        </div>
+                        <div class="retail-view__item">
+                            <span>Total in retail units</span>
+                            <strong>
+                                {{
+                                    viewDetails.enabled
+                                        ? `${viewDetails.retailTotal} ${viewDetails.retailUnit}`
+                                        : "—"
+                                }}
+                            </strong>
+                        </div>
+                        <div class="retail-view__item">
+                            <span>Cannot sell (display / mice)</span>
+                            <strong>
+                                {{
+                                    viewDetails.enabled
+                                        ? `${viewDetails.allowedLoss} ${viewDetails.retailUnit}`
+                                        : "—"
+                                }}
+                            </strong>
+                        </div>
+                        <div class="retail-view__item">
+                            <span>Can sell</span>
+                            <strong>
+                                {{
+                                    viewDetails.enabled
+                                        ? `${viewDetails.sellableRetail} ${viewDetails.retailUnit}`
+                                        : "—"
+                                }}
+                            </strong>
+                        </div>
+                    </div>
+                </section>
+
+                <div class="form-actions">
+                    <Button type="button" variant="outline" @click="closeView">
+                        Close
+                    </Button>
+                </div>
+            </div>
+        </Modal>
 
         <Modal
             :open="showRevenueLogs"

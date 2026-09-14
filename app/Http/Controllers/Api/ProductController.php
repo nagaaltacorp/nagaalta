@@ -15,6 +15,30 @@ class ProductController extends Controller
     {
         $managerBranchIds = ManagerBranchScope::branchIdsFor($request->user());
 
+        if ($request->boolean('catalog')) {
+            $productsQuery = Product::query()->with([
+                'inventory',
+                'sales',
+                'inventories' => function ($query) use ($managerBranchIds) {
+                    $query->select(['id', 'product_id', 'branch_id', 'quantity', 'retail_remainder'])
+                        ->with('branch:id,name');
+
+                    if ($managerBranchIds !== null) {
+                        if ($managerBranchIds === []) {
+                            $query->whereRaw('1 = 0');
+                        } else {
+                            $query->whereIn('branch_id', $managerBranchIds);
+                        }
+                    }
+                },
+            ]);
+
+            $products = $productsQuery->orderBy('name')->get();
+            $this->appendBranchQuantities($products);
+
+            return response()->json(['data' => $products]);
+        }
+
         if ($managerBranchIds !== null) {
             if ($managerBranchIds === []) {
                 return response()->json(['data' => []]);
@@ -27,7 +51,7 @@ class ProductController extends Controller
                 ->with([
                     'inventories' => function ($query) use ($managerBranchIds) {
                         $query->whereIn('branch_id', $managerBranchIds);
-                        $query->select(['id', 'product_id', 'branch_id', 'quantity'])
+                        $query->select(['id', 'product_id', 'branch_id', 'quantity', 'retail_remainder'])
                             ->with('branch:id,name');
                     },
                     'sales',
@@ -57,7 +81,7 @@ class ProductController extends Controller
             'inventory',
             'sales',
             'inventories' => function ($query) {
-                $query->select(['id', 'product_id', 'branch_id', 'quantity'])
+                $query->select(['id', 'product_id', 'branch_id', 'quantity', 'retail_remainder'])
                     ->with('branch:id,name');
             },
         ]);
@@ -70,7 +94,7 @@ class ProductController extends Controller
                 ->with([
                     'inventories' => function ($query) use ($branchId) {
                         $query->where('branch_id', $branchId);
-                        $query->select(['id', 'product_id', 'branch_id', 'quantity'])
+                        $query->select(['id', 'product_id', 'branch_id', 'quantity', 'retail_remainder'])
                             ->with('branch:id,name');
                     },
                 ]);
@@ -153,19 +177,33 @@ class ProductController extends Controller
         $products->each(function (Product $product) {
             $branchQuantities = $product->inventories
                 ->groupBy('branch_id')
-                ->map(function ($items) {
+                ->map(function ($items) use ($product) {
                     $firstItem = $items->first();
                     $branch = $firstItem?->branch;
+                    $quantity = (int) $items->sum('quantity');
+                    $remainder = (float) $items->sum('retail_remainder');
+                    $physical = $product->physicalRetailQuantity($quantity, $remainder);
 
                     return [
                         'branch_id' => $firstItem?->branch_id,
                         'branch_name' => $branch?->name,
-                        'quantity' => $items->sum('quantity'),
+                        'quantity' => $quantity,
+                        'retail_remainder' => $remainder,
+                        'physical_retail_quantity' => $physical,
+                        'allowed_loss' => $product->allowedRetailLoss(),
+                        'available_retail_quantity' => $product->availableRetailQuantity(
+                            $quantity,
+                            $remainder,
+                        ),
                     ];
                 })
                 ->values();
 
             $product->setAttribute('branch_quantities', $branchQuantities);
+            $product->setAttribute(
+                'available_retail_quantity',
+                (float) $branchQuantities->sum('available_retail_quantity'),
+            );
         });
     }
 

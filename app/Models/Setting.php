@@ -12,5 +12,15 @@ class Setting extends Model
         'timezone',
         'currency',
         'low_stock_threshold',
+        'default_vat_rate',
+    ];
+
+    protected $casts = [
+        'low_stock_threshold' => 'integer',
+        'default_vat_rate' => 'decimal:2',
+    ];
+
+    protected $hidden = [
+        'discount_password_hash',
     ];
 }

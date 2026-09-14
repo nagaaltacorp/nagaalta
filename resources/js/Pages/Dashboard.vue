@@ -3,7 +3,6 @@ import { Head } from "@inertiajs/vue3";
 import { computed, onMounted, onUnmounted, reactive, ref, watch } from "vue";
 import VueApexCharts from "vue3-apexcharts";
 import AppLayout from "../components/layout/AppLayout.vue";
-import Card from "../components/ui/Card.vue";
 import api from "../services/api";
 
 const DASHBOARD_CONTAINER_POLL_MS = 10000;
@@ -642,8 +641,7 @@ onUnmounted(() => {
         </div>
 
         <div class="dashboard-charts-grid">
-            <Card class="dashboard-surface-card">
-                <section class="dashboard-chart-card">
+            <section class="dashboard-chart-card dashboard-surface-card">
                     <div class="dashboard-chart-card__head">
                         <div>
                             <h3 class="dashboard-chart-card__title">
@@ -729,10 +727,8 @@ onUnmounted(() => {
                         />
                     </div>
                 </section>
-            </Card>
 
-            <Card class="dashboard-surface-card">
-                <section class="dashboard-bar-card">
+            <section class="dashboard-bar-card dashboard-surface-card">
                     <div class="dashboard-bar-card__head">
                         <h3 class="dashboard-bar-card__title">
                             Bar chart - daily
@@ -770,12 +766,10 @@ onUnmounted(() => {
                         Showing branch totals per day for the current month
                     </p>
                 </section>
-            </Card>
         </div>
 
         <div class="dashboard-bottom-grid">
-            <Card class="dashboard-surface-card">
-                <section class="dashboard-latest-sales">
+            <section class="dashboard-latest-sales dashboard-surface-card">
                     <div class="dashboard-latest-sales__head">
                         <h3 class="dashboard-latest-sales__title">
                             Latest sales
@@ -827,7 +821,7 @@ onUnmounted(() => {
                                         </td>
                                         <td>{{ sale.product_name }}</td>
                                         <td class="dashboard-latest-sales__qty">
-                                            {{ sale.quantity }}
+                                            {{ sale.quantity_display || sale.quantity }}
                                         </td>
                                         <td
                                             class="dashboard-latest-sales__amount"
@@ -846,10 +840,8 @@ onUnmounted(() => {
                         </div>
                     </div>
                 </section>
-            </Card>
 
-            <Card class="dashboard-surface-card">
-                <section class="dashboard-pie-card">
+            <section class="dashboard-pie-card dashboard-surface-card">
                     <div class="dashboard-pie-card__head">
                         <h3 class="dashboard-pie-card__title">
                             Top selling products
@@ -887,7 +879,6 @@ onUnmounted(() => {
                         Based on quantity sold for the selected period
                     </p>
                 </section>
-            </Card>
         </div>
     </AppLayout>
 </template>

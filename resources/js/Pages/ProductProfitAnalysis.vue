@@ -1,21 +1,23 @@
 <script setup>
 import { Head } from "@inertiajs/vue3";
-import { computed, onMounted, onUnmounted, ref, watch } from "vue";
+import { computed, onMounted, onUnmounted, ref } from "vue";
 import VueApexCharts from "vue3-apexcharts";
 import AppLayout from "../components/layout/AppLayout.vue";
-import Card from "../components/ui/Card.vue";
 import Table from "../components/ui/Table.vue";
 import api from "../services/api";
 
 const POLL_INTERVAL_MS = 10000;
-const SACK_TO_KILO = 50;
-const METHOD_BAG = "bag";
-const METHOD_SACK = "sack";
-const METHOD_KILO = "kilo";
-const insightLanguageOptions = [
-    { value: "english", label: "English" },
-    { value: "tagalog", label: "Tagalog (Casual)" },
-    { value: "naga_bicol", label: "Naga Bicol (Casual, Central Bikol)" },
+const TOP_BAR_LIMIT = 8;
+const TOP_TREND_LIMIT = 5;
+const CHART_COLORS = [
+    "#16a34a",
+    "#65a30d",
+    "#15803d",
+    "#84cc16",
+    "#22c55e",
+    "#4ade80",
+    "#166534",
+    "#a3e635",
 ];
 
 const sales = ref([]);
@@ -24,15 +26,30 @@ const dateFrom = ref("");
 const dateTo = ref("");
 let pollTimerId = null;
 let isRefreshing = false;
-const aiInsights = ref([]);
-const aiInsightSource = ref("fallback");
-const aiInsightStatus = ref("");
-const isLoadingAiInsight = ref(false);
-let aiInsightRequestId = 0;
-const aiSuggestionItems = ref([]);
-const aiSuggestionMode = ref("");
-const selectedInsightLanguage = ref("english");
-const hasGeneratedAiInsight = ref(false);
+
+const formatCurrency = (value) =>
+    Number(value || 0).toLocaleString(undefined, {
+        minimumFractionDigits: 2,
+        maximumFractionDigits: 2,
+    });
+
+const formatCount = (value) => Number(value || 0).toLocaleString();
+
+const formatPercent = (value) =>
+    Number(value || 0).toLocaleString(undefined, {
+        minimumFractionDigits: 1,
+        maximumFractionDigits: 1,
+    });
+
+const truncateLabel = (value, maxLength = 18) => {
+    const label = String(value || "").trim();
+
+    if (label.length <= maxLength) {
+        return label;
+    }
+
+    return `${label.slice(0, maxLength - 1)}…`;
+};
 
 const getCreatedAtDate = (sale) => {
     const date = new Date(sale.created_at);
@@ -40,94 +57,42 @@ const getCreatedAtDate = (sale) => {
     return Number.isNaN(date.getTime()) ? null : date;
 };
 
-const normalizeUnitType = (unitValue) => {
-    const unit = String(unitValue || "")
+const getUnitLabel = (sale) => {
+    const unit = String(sale.unit_type || sale.product?.unit || "unit")
         .trim()
         .toLowerCase();
 
     if (!unit) {
-        return "other";
+        return "unit";
     }
 
     if (unit.includes("bag")) {
-        return METHOD_BAG;
+        return "bag";
     }
 
     if (unit.includes("sack")) {
-        return METHOD_SACK;
+        return "sack";
     }
 
     if (unit.includes("kilo") || unit.includes("kg")) {
-        return METHOD_KILO;
+        return "kg";
     }
 
-    return "other";
+    return unit;
 };
 
-const getSaleMethod = (sale) => {
-    const saleMethod = normalizeUnitType(sale.unit_type);
-    const productMethod = normalizeUnitType(sale.product?.unit);
+const formatQtyLabel = (units, totalQty) => {
+    const parts = Array.from(units.entries())
+        .filter(([, quantity]) => quantity > 0)
+        .sort((a, b) => b[1] - a[1])
+        .map(([unit, quantity]) => `${formatCount(quantity)} ${unit}`);
 
-    // Keep legacy rows accurate when old data stored "sack" for bag products.
-    if (saleMethod === METHOD_SACK && productMethod === METHOD_BAG) {
-        return METHOD_BAG;
+    if (!parts.length) {
+        return `${formatCount(totalQty)} unit`;
     }
 
-    if (saleMethod !== "other") {
-        return saleMethod;
-    }
-
-    return productMethod;
+    return parts.join(" + ");
 };
-
-const getMethodLabel = (method) => {
-    if (method === METHOD_BAG) {
-        return `Bag (${SACK_TO_KILO}kg)`;
-    }
-
-    if (method === METHOD_SACK) {
-        return `Sack (${SACK_TO_KILO}kg)`;
-    }
-
-    if (method === METHOD_KILO) {
-        return "Per Kilo";
-    }
-
-    return "Other";
-};
-
-const packedTypeLabel = computed(() => {
-    const hasBag = comparisonRows.value.some(
-        (row) => row.method === METHOD_BAG,
-    );
-    const hasSack = comparisonRows.value.some(
-        (row) => row.method === METHOD_SACK,
-    );
-
-    if (hasBag && hasSack) {
-        return "Bag/Sack";
-    }
-
-    if (hasBag) {
-        return "Bag";
-    }
-
-    if (hasSack) {
-        return "Sack";
-    }
-
-    return "Pack Unit";
-});
-
-const packedTypeInsightLabel = computed(() => {
-    const label = packedTypeLabel.value;
-
-    if (label === "Bag/Sack") {
-        return "bag or sack";
-    }
-
-    return label.toLowerCase();
-});
 
 const formatDateKey = (dateValue) => {
     const date = new Date(dateValue);
@@ -187,11 +152,11 @@ const searchedSales = computed(() => {
     }
 
     return dateFilteredSales.value.filter((sale) => {
-        const methodLabel = getMethodLabel(getSaleMethod(sale));
         const searchable = [
             sale.sale_number,
             sale.product?.name,
-            methodLabel,
+            sale.product?.category,
+            getUnitLabel(sale),
             String(sale.quantity ?? ""),
         ]
             .filter(Boolean)
@@ -202,121 +167,106 @@ const searchedSales = computed(() => {
     });
 });
 
-const comparisonRows = computed(() => {
+const productRows = computed(() => {
     const grouped = new Map();
 
     searchedSales.value.forEach((sale) => {
-        const method = getSaleMethod(sale);
-
-        if (
-            method !== METHOD_SACK &&
-            method !== METHOD_BAG &&
-            method !== METHOD_KILO
-        ) {
-            return;
-        }
-
         const productId = sale.product_id ?? sale.product?.id ?? "unknown";
         const productName = sale.product?.name || "Unknown Product";
-        const key = `${productId}-${method}`;
         const quantity = Number(sale.quantity || 0);
         const totalPrice = Number(sale.total_price || 0);
+        const unit = getUnitLabel(sale);
 
-        if (!grouped.has(key)) {
-            grouped.set(key, {
-                id: key,
+        if (!grouped.has(productId)) {
+            grouped.set(productId, {
+                id: String(productId),
                 productName,
-                method,
-                methodLabel: getMethodLabel(method),
                 qtySold: 0,
+                orderCount: 0,
                 totalSales: 0,
-                totalWeightKg: 0,
+                units: new Map(),
             });
         }
 
-        const row = grouped.get(key);
+        const row = grouped.get(productId);
         row.qtySold += quantity;
+        row.orderCount += 1;
         row.totalSales += totalPrice;
-        row.totalWeightKg +=
-            method === METHOD_SACK || method === METHOD_BAG
-                ? quantity * SACK_TO_KILO
-                : quantity;
+        row.units.set(unit, Number(row.units.get(unit) || 0) + quantity);
     });
 
-    return Array.from(grouped.values())
+    const rows = Array.from(grouped.values());
+    const totalRevenue = rows.reduce((sum, row) => sum + row.totalSales, 0);
+
+    return rows
         .map((row) => ({
             ...row,
             averagePrice: row.qtySold > 0 ? row.totalSales / row.qtySold : 0,
+            share: totalRevenue > 0 ? (row.totalSales / totalRevenue) * 100 : 0,
+            qtyLabel: formatQtyLabel(row.units, row.qtySold),
         }))
-        .sort((a, b) => b.totalSales - a.totalSales);
+        .sort((a, b) => {
+            if (b.qtySold !== a.qtySold) {
+                return b.qtySold - a.qtySold;
+            }
+
+            return b.totalSales - a.totalSales;
+        })
+        .map((row, index) => ({
+            ...row,
+            rank: index + 1,
+        }));
 });
 
-const methodTotals = computed(() => {
-    const totals = {
-        [METHOD_SACK]: {
-            revenue: 0,
-            quantity: 0,
-            weightKg: 0,
-        },
-        [METHOD_BAG]: {
-            revenue: 0,
-            quantity: 0,
-            weightKg: 0,
-        },
-        [METHOD_KILO]: {
-            revenue: 0,
-            quantity: 0,
-            weightKg: 0,
-        },
-    };
-
-    comparisonRows.value.forEach((row) => {
-        totals[row.method].revenue += row.totalSales;
-        totals[row.method].quantity += row.qtySold;
-        totals[row.method].weightKg += row.totalWeightKg;
-    });
-
-    return totals;
-});
-
-const totalSalesPack = computed(
-    () =>
-        methodTotals.value[METHOD_SACK].revenue +
-        methodTotals.value[METHOD_BAG].revenue,
-);
-const totalSalesKilo = computed(() => methodTotals.value[METHOD_KILO].revenue);
-
-const profitDifference = computed(
-    () => totalSalesPack.value - totalSalesKilo.value,
+const totalRevenue = computed(() =>
+    productRows.value.reduce((sum, row) => sum + row.totalSales, 0),
 );
 
-const bestSellingMethod = computed(() => {
-    if (totalSalesPack.value === 0 && totalSalesKilo.value === 0) {
-        return "No sales yet";
-    }
+const totalUnitsSold = computed(() =>
+    productRows.value.reduce((sum, row) => sum + row.qtySold, 0),
+);
 
-    if (totalSalesPack.value > totalSalesKilo.value) {
-        return packedTypeLabel.value;
-    }
+const totalOrders = computed(() =>
+    productRows.value.reduce((sum, row) => sum + row.orderCount, 0),
+);
 
-    if (totalSalesKilo.value > totalSalesPack.value) {
-        return "Per Kilo";
-    }
+const topProduct = computed(() => productRows.value[0] ?? null);
 
-    return "Tie";
-});
+const metricCards = computed(() => [
+    {
+        key: "revenue",
+        label: "Total Sales",
+        value: `₱ ${formatCurrency(totalRevenue.value)}`,
+    },
+    {
+        key: "units",
+        label: "Units Sold",
+        value: formatCount(totalUnitsSold.value),
+    },
+    {
+        key: "products",
+        label: "Products Sold",
+        value: formatCount(productRows.value.length),
+    },
+    {
+        key: "top",
+        label: "Most Bought Product",
+        value: topProduct.value?.productName ?? "No sales yet",
+        valueType: "text",
+        tone: topProduct.value ? "positive" : "neutral",
+    },
+]);
 
-const totalWeightSold = computed(
-    () =>
-        methodTotals.value[METHOD_SACK].weightKg +
-        methodTotals.value[METHOD_BAG].weightKg +
-        methodTotals.value[METHOD_KILO].weightKg,
+const topBarRows = computed(() => productRows.value.slice(0, TOP_BAR_LIMIT));
+
+const barChartHeight = computed(() =>
+    Math.max(280, topBarRows.value.length * 42 + 48),
 );
 
 const barChartSeries = computed(() => [
     {
-        name: "Revenue",
-        data: [totalSalesPack.value, totalSalesKilo.value],
+        name: "Qty Sold",
+        data: topBarRows.value.map((row) => row.qtySold),
     },
 ]);
 
@@ -329,56 +279,72 @@ const barChartOptions = computed(() => ({
             speed: 220,
         },
     },
-    colors: ["#16a34a"],
+    colors: [CHART_COLORS[0]],
     plotOptions: {
         bar: {
+            horizontal: true,
             borderRadius: 6,
-            columnWidth: "46%",
+            barHeight: topBarRows.value.length > 4 ? "62%" : "42%",
         },
     },
     dataLabels: { enabled: false },
     xaxis: {
-        categories: [packedTypeLabel.value, "Per Kilo"],
+        categories: topBarRows.value.map((row) => row.productName),
         labels: {
+            formatter: (value) => {
+                const numeric = Number(value);
+
+                return Number.isFinite(numeric)
+                    ? numeric.toFixed(0)
+                    : String(value ?? "");
+            },
             style: {
-                colors: "#64748b",
+                colors: "#94a3b8",
             },
         },
     },
     yaxis: {
+        reversed: true,
         labels: {
-            formatter: (value) => Number(value || 0).toFixed(0),
+            maxWidth: 128,
+            formatter: (value) => truncateLabel(value),
             style: {
-                colors: "#94a3b8",
+                colors: "#64748b",
             },
         },
     },
     grid: {
         borderColor: "#e2e8f0",
         strokeDashArray: 4,
+        xaxis: {
+            lines: { show: true },
+        },
+        yaxis: {
+            lines: { show: false },
+        },
     },
     tooltip: {
         theme: "light",
         y: {
-            formatter: (value) => `₱ ${formatCurrency(value)}`,
+            formatter: (value, { dataPointIndex }) => {
+                const row = topBarRows.value[dataPointIndex];
+
+                if (!row) {
+                    return formatCount(value);
+                }
+
+                return `${row.qtyLabel} · ₱ ${formatCurrency(row.totalSales)}`;
+            },
         },
     },
 }));
+
+const trendRows = computed(() => productRows.value.slice(0, TOP_TREND_LIMIT));
 
 const trendData = computed(() => {
     const byDate = new Map();
 
     searchedSales.value.forEach((sale) => {
-        const method = getSaleMethod(sale);
-
-        if (
-            method !== METHOD_SACK &&
-            method !== METHOD_BAG &&
-            method !== METHOD_KILO
-        ) {
-            return;
-        }
-
         const dateKey = formatDateKey(sale.created_at);
 
         if (!dateKey) {
@@ -386,15 +352,17 @@ const trendData = computed(() => {
         }
 
         if (!byDate.has(dateKey)) {
-            byDate.set(dateKey, {
-                [METHOD_SACK]: 0,
-                [METHOD_BAG]: 0,
-                [METHOD_KILO]: 0,
-            });
+            byDate.set(dateKey, new Map());
         }
 
-        const entry = byDate.get(dateKey);
-        entry[method] += Number(sale.total_price || 0);
+        const productId = String(
+            sale.product_id ?? sale.product?.id ?? "unknown",
+        );
+        const dayMap = byDate.get(dateKey);
+        dayMap.set(
+            productId,
+            Number(dayMap.get(productId) || 0) + Number(sale.total_price || 0),
+        );
     });
 
     const sortedEntries = Array.from(byDate.entries()).sort((a, b) =>
@@ -403,23 +371,18 @@ const trendData = computed(() => {
 
     return {
         labels: sortedEntries.map(([dateKey]) => formatShortDate(dateKey)),
-        pack: sortedEntries.map(
-            ([, values]) => values[METHOD_SACK] + values[METHOD_BAG],
-        ),
-        kilo: sortedEntries.map(([, values]) => values[METHOD_KILO]),
+        valuesByProduct: sortedEntries.map(([, dayMap]) => dayMap),
     };
 });
 
-const trendSeries = computed(() => [
-    {
-        name: `${packedTypeLabel.value} Revenue`,
-        data: trendData.value.pack,
-    },
-    {
-        name: "Per Kilo Revenue",
-        data: trendData.value.kilo,
-    },
-]);
+const trendSeries = computed(() =>
+    trendRows.value.map((row) => ({
+        name: row.productName,
+        data: trendData.value.valuesByProduct.map((dayMap) =>
+            Number(dayMap.get(row.id) || 0),
+        ),
+    })),
+);
 
 const trendOptions = computed(() => ({
     chart: {
@@ -431,13 +394,13 @@ const trendOptions = computed(() => ({
             speed: 240,
         },
     },
-    colors: ["#16a34a", "#65a30d"],
+    colors: CHART_COLORS,
     stroke: {
         curve: "smooth",
         width: 2,
     },
     markers: {
-        size: 4,
+        size: trendData.value.labels.length > 12 ? 0 : 4,
     },
     xaxis: {
         categories: trendData.value.labels,
@@ -472,470 +435,6 @@ const trendOptions = computed(() => ({
         },
     },
 }));
-
-const fallbackInsights = computed(() => {
-    const insights = [];
-    const difference = profitDifference.value;
-    const packWeight =
-        methodTotals.value[METHOD_SACK].weightKg +
-        methodTotals.value[METHOD_BAG].weightKg;
-    const kiloWeight = methodTotals.value[METHOD_KILO].weightKg;
-
-    if (totalSalesPack.value === 0 && totalSalesKilo.value === 0) {
-        insights.push(
-            `No ${packedTypeInsightLabel.value} or per kilo sales found for the selected filters.`,
-        );
-        insights.push(
-            "Start recording unit type in sales to unlock deeper method analysis.",
-        );
-
-        return insights;
-    }
-
-    if (difference > 0) {
-        insights.push(
-            `Selling per ${packedTypeInsightLabel.value} gives higher revenue by ₱ ${formatCurrency(Math.abs(difference))}.`,
-        );
-    } else if (difference < 0) {
-        insights.push(
-            `Selling per kilo gives higher revenue by ₱ ${formatCurrency(Math.abs(difference))}.`,
-        );
-    } else {
-        insights.push(
-            `${packedTypeLabel.value} and per kilo currently generate equal revenue.`,
-        );
-    }
-
-    if (kiloWeight > packWeight) {
-        insights.push(
-            `Per kilo sells more volume by ${formatCount(kiloWeight - packWeight)} kg.`,
-        );
-    } else if (packWeight > kiloWeight) {
-        insights.push(
-            `${packedTypeLabel.value} method moves more volume by ${formatCount(packWeight - kiloWeight)} kg.`,
-        );
-    } else if (packWeight > 0 || kiloWeight > 0) {
-        insights.push("Both methods currently move the same volume.");
-    }
-
-    const packRevenuePerKg =
-        packWeight > 0 ? totalSalesPack.value / packWeight : 0;
-    const kiloRevenuePerKg =
-        kiloWeight > 0 ? totalSalesKilo.value / kiloWeight : 0;
-
-    if (packRevenuePerKg > 0 && kiloRevenuePerKg > 0) {
-        if (packRevenuePerKg > kiloRevenuePerKg) {
-            insights.push(
-                `Per ${packedTypeInsightLabel.value} yields higher estimated revenue per kilogram.`,
-            );
-        } else if (kiloRevenuePerKg > packRevenuePerKg) {
-            insights.push(
-                "Per kilo yields higher estimated revenue per kilogram.",
-            );
-        } else {
-            insights.push(
-                "Both methods have similar estimated revenue per kilogram.",
-            );
-        }
-    }
-
-    insights.push(
-        "Add product cost fields to compute true profit margin by method.",
-    );
-
-    return insights;
-});
-
-const displayedInsights = computed(() => {
-    if (!hasGeneratedAiInsight.value) {
-        return [];
-    }
-
-    return aiInsights.value.length ? aiInsights.value : fallbackInsights.value;
-});
-
-const insightParagraphText = computed(() => {
-    if (!displayedInsights.value.length) {
-        return "";
-    }
-
-    return displayedInsights.value
-        .map((insight) => String(insight || "").trim())
-        .filter(Boolean)
-        .map((insight) => (/[.!?]$/u.test(insight) ? insight : `${insight}.`))
-        .join(" ");
-});
-
-const selectedInsightLanguageLabel = computed(
-    () =>
-        insightLanguageOptions.find(
-            (option) => option.value === selectedInsightLanguage.value,
-        )?.label ?? "English",
-);
-
-const insightStatusVariant = computed(() => {
-    if (!hasGeneratedAiInsight.value) {
-        return "idle";
-    }
-
-    if (isLoadingAiInsight.value) {
-        return "loading";
-    }
-
-    if (aiInsightStatus.value) {
-        return "warning";
-    }
-
-    if (aiInsightSource.value === "groq") {
-        return "ai";
-    }
-
-    return "fallback";
-});
-
-const insightStatusLabel = computed(() => {
-    if (insightStatusVariant.value === "loading") {
-        return "Generating";
-    }
-
-    if (insightStatusVariant.value === "warning") {
-        return "Fallback Active";
-    }
-
-    if (insightStatusVariant.value === "ai") {
-        return "AI Generated";
-    }
-
-    if (insightStatusVariant.value === "fallback") {
-        return "Computed Insight";
-    }
-
-    return "Ready";
-});
-
-const insightStatusDetail = computed(() => {
-    if (!hasGeneratedAiInsight.value) {
-        return "Pick a language/dialect, then click Generate Insight.";
-    }
-
-    if (isLoadingAiInsight.value) {
-        return `Generating AI insight in ${selectedInsightLanguageLabel.value}...`;
-    }
-
-    if (aiInsightStatus.value) {
-        return aiInsightStatus.value;
-    }
-
-    if (aiInsightSource.value === "groq") {
-        return `AI-enhanced insights powered by Groq in ${selectedInsightLanguageLabel.value}.`;
-    }
-
-    return `Showing computed insights for ${selectedInsightLanguageLabel.value}.`;
-});
-
-const trendRevenueSeries = computed(() =>
-    trendData.value.pack.map(
-        (packRevenue, index) =>
-            Number(packRevenue || 0) + Number(trendData.value.kilo[index] || 0),
-    ),
-);
-
-const salesTrendDirection = computed(() => {
-    const values = trendRevenueSeries.value.filter((value) =>
-        Number.isFinite(value),
-    );
-
-    if (values.length < 2) {
-        return "stable";
-    }
-
-    if (values.length < 4) {
-        const delta = values[values.length - 1] - values[0];
-
-        if (delta > 0) {
-            return "up";
-        }
-
-        if (delta < 0) {
-            return "down";
-        }
-
-        return "stable";
-    }
-
-    const splitIndex = Math.floor(values.length / 2);
-    const firstWindow = values.slice(0, splitIndex);
-    const secondWindow = values.slice(splitIndex);
-    const firstAverage =
-        firstWindow.reduce((sum, value) => sum + value, 0) / firstWindow.length;
-    const secondAverage =
-        secondWindow.reduce((sum, value) => sum + value, 0) /
-        secondWindow.length;
-
-    if (secondAverage > firstAverage * 1.03) {
-        return "up";
-    }
-
-    if (secondAverage < firstAverage * 0.97) {
-        return "down";
-    }
-
-    return "stable";
-});
-
-const suggestionMode = computed(() => {
-    if (
-        aiSuggestionMode.value === "improve" ||
-        aiSuggestionMode.value === "maintain"
-    ) {
-        return aiSuggestionMode.value;
-    }
-
-    if (!insightParagraphText.value) {
-        return "idle";
-    }
-
-    const totalRevenue = totalSalesPack.value + totalSalesKilo.value;
-
-    if (totalRevenue <= 0) {
-        return "improve";
-    }
-
-    if (salesTrendDirection.value === "down") {
-        return "improve";
-    }
-
-    if (profitDifference.value < 0) {
-        return "improve";
-    }
-
-    return "maintain";
-});
-
-const suggestionContent = computed(() => {
-    const mode = suggestionMode.value;
-    const language = selectedInsightLanguage.value;
-    const method = bestSellingMethod.value;
-
-    if (mode === "idle") {
-        return {
-            title: "",
-            intro: "",
-            items: [],
-        };
-    }
-
-    if (language === "tagalog") {
-        if (mode === "improve") {
-            return {
-                title: "Suggestions para tumaas ang sales",
-                intro: "Medyo kailangan pa iangat ang trend. Subukan ito this week:",
-                items: [
-                    `Tutukan yung products na malakas sa ${method}, tapos lagyan ng simpleng promo yung mas mahina.`,
-                    "Mag test ng maliit na price adjustment (hal. ₱10-₱20) at i-check ang daily effect sa benta.",
-                    "I-bundle ang slow-moving items sa top products para tumaas ang total kada transaksyon.",
-                    "Mag weekly review sa pinaka-mahinang rows at unahin i-restock yung mabilis maubos.",
-                ],
-            };
-        }
-
-        return {
-            title: "Suggestions para ma-maintain ang magandang sales",
-            intro: "Maganda ang takbo ng benta. Ito ang puwedeng ituloy:",
-            items: [
-                "Panatilihin ang stock buffer sa top-selling products para iwas out-of-stock sa peak days.",
-                "I-keep muna ang price points na gumagana, at maliit lang na tests kapag mabagal ang araw.",
-                `I-monitor weekly ang ${method} kontra sa ibang method para maagapan agad kapag may dip.`,
-                "Magbigay ng light rewards sa repeat buyers para steady ang volume at balik-bili.",
-            ],
-        };
-    }
-
-    if (language === "naga_bicol") {
-        if (mode === "improve") {
-            return {
-                title: "Mga paagi para mapauswag pa an benta",
-                intro: "Medyo mahina pa an trend. Tistinga ini na practical na paagi:",
-                items: [
-                    `Tutokan ta an products na maray an benta sa ${method}, tapos mag simple promo sa mas mahina.`,
-                    "Mag test nin gamay na pag-adjust sa presyo (hal. ₱10-₱20) tapos bantayan an effect kada adlaw.",
-                    "Ipares an slow-moving items sa top products tanganing tumaas an total kada transaksyon.",
-                    "Reviewhon kada semana an pinakahinay na products asin i-prioritize an mabilis umikot na stock.",
-                ],
-            };
-        }
-
-        return {
-            title: "Mga paagi para mapanatili an maray na benta",
-            intro: "Maray an dagan nin sales ngunyan. Ini an pwedeng padagoson:",
-            items: [
-                "Panatilihon an stock buffer sa top-selling products para dai maubusan sa peak na adlaw.",
-                "I-keep an presyo na nagana, asin mag test lang nin gamay na change sa mga mahihinang adlaw.",
-                `Padagoson an weekly check sa ${method} versus ibang method para maagapan an dip.`,
-                "Mag offer nin simple reward sa repeat customers para tuloy-tuloy an volume nin benta.",
-            ],
-        };
-    }
-
-    if (mode === "improve") {
-        return {
-            title: "Suggestions to Improve Sales",
-            intro: "Sales trend needs a lift. Try these actions this week:",
-            items: [
-                `Push products with stronger demand in ${method}, then run light promos on slower methods.`,
-                "Test small price changes (about ₱10-₱20) and monitor daily conversion before scaling.",
-                "Bundle slow-moving products with top sellers to increase average transaction value.",
-                "Review low-performing rows weekly and prioritize restock for high-rotation items.",
-            ],
-        };
-    }
-
-    return {
-        title: "Suggestions to Maintain Strong Sales",
-        intro: "Sales are looking healthy. Keep momentum with these habits:",
-        items: [
-            "Maintain stock buffer on top sellers to avoid missed sales during peak hours.",
-            "Keep current winning price points and run only controlled micro-tests on slow days.",
-            `Track ${method} versus alternative methods weekly so you can react quickly to early dips.`,
-            "Use light loyalty offers for repeat buyers to sustain volume and customer retention.",
-        ],
-    };
-});
-
-const suggestionTitle = computed(() => suggestionContent.value.title);
-const suggestionIntro = computed(() => suggestionContent.value.intro);
-const suggestionItems = computed(() =>
-    aiSuggestionItems.value.length
-        ? aiSuggestionItems.value
-        : suggestionContent.value.items,
-);
-
-const aiInsightSummary = computed(() => ({
-    packed_label: packedTypeLabel.value,
-    best_selling_method: bestSellingMethod.value,
-    total_sales_pack: Number(totalSalesPack.value || 0),
-    total_sales_kilo: Number(totalSalesKilo.value || 0),
-    profit_difference: Number(profitDifference.value || 0),
-    total_weight_sold_kg: Number(totalWeightSold.value || 0),
-    rows: comparisonRows.value.slice(0, 12).map((row) => ({
-        product: row.productName,
-        type: row.methodLabel,
-        qty_sold: Number(row.qtySold || 0),
-        average_price: Number(row.averagePrice || 0),
-        total: Number(row.totalSales || 0),
-    })),
-}));
-
-const topComparisonRow = computed(() => comparisonRows.value[0] ?? null);
-
-const metricCards = computed(() => [
-    {
-        key: "pack",
-        label: `Total Sales (${packedTypeLabel.value})`,
-        value: `₱ ${formatCurrency(totalSalesPack.value)}`,
-    },
-    {
-        key: "kilo",
-        label: "Total Sales (Per Kilo)",
-        value: `₱ ${formatCurrency(totalSalesKilo.value)}`,
-    },
-    {
-        key: "difference",
-        label: "Profit Difference",
-        value: `${profitDifference.value >= 0 ? "+" : "-"}₱ ${formatCurrency(
-            Math.abs(profitDifference.value),
-        )}`,
-        tone:
-            profitDifference.value > 0
-                ? "positive"
-                : profitDifference.value < 0
-                  ? "negative"
-                  : "neutral",
-    },
-    {
-        key: "method",
-        label: "Best Selling Method",
-        value: bestSellingMethod.value,
-        valueType: "text",
-    },
-]);
-
-const formatCurrency = (value) =>
-    Number(value || 0).toLocaleString(undefined, {
-        minimumFractionDigits: 2,
-        maximumFractionDigits: 2,
-    });
-
-const formatCount = (value) => Number(value || 0).toLocaleString();
-
-const formatQuantityByMethod = (row) => {
-    if (row.method === METHOD_BAG) {
-        return `${formatCount(row.qtySold)} bag(s)`;
-    }
-
-    if (row.method === METHOD_SACK) {
-        return `${formatCount(row.qtySold)} sack(s)`;
-    }
-
-    return `${formatCount(row.qtySold)} kg`;
-};
-
-const refreshAiInsights = async () => {
-    const requestId = ++aiInsightRequestId;
-    hasGeneratedAiInsight.value = true;
-    isLoadingAiInsight.value = true;
-    aiInsightStatus.value = "";
-    aiSuggestionItems.value = [];
-    aiSuggestionMode.value = "";
-
-    try {
-        const { data } = await api.post("/profit-analysis/insights", {
-            summary: aiInsightSummary.value,
-            fallback_insights: fallbackInsights.value,
-            language: selectedInsightLanguage.value,
-        });
-
-        if (requestId !== aiInsightRequestId) {
-            return;
-        }
-
-        const insights = data?.data?.insights;
-        const suggestions = data?.data?.suggestions;
-        const suggestionModeFromApi = data?.data?.suggestion_mode;
-        aiInsightSource.value = data?.data?.source || "fallback";
-        aiInsightStatus.value = data?.data?.message || "";
-        aiInsights.value =
-            Array.isArray(insights) && insights.length
-                ? insights
-                : fallbackInsights.value;
-        aiSuggestionMode.value =
-            suggestionModeFromApi === "improve" ||
-            suggestionModeFromApi === "maintain"
-                ? suggestionModeFromApi
-                : "";
-        aiSuggestionItems.value = Array.isArray(suggestions)
-            ? suggestions
-                  .map((item) => String(item || "").trim())
-                  .filter(Boolean)
-                  .slice(0, 4)
-            : [];
-    } catch (error) {
-        if (requestId !== aiInsightRequestId) {
-            return;
-        }
-
-        aiInsightSource.value = "fallback";
-        aiInsightStatus.value =
-            "AI insight is temporarily unavailable. Showing computed insights.";
-        aiInsights.value = fallbackInsights.value;
-        aiSuggestionItems.value = [];
-        aiSuggestionMode.value = "";
-    } finally {
-        if (requestId === aiInsightRequestId) {
-            isLoadingAiInsight.value = false;
-        }
-    }
-};
 
 const resetFilters = () => {
     searchQuery.value = "";
@@ -981,24 +480,6 @@ const handleVisibilityChange = () => {
     }
 };
 
-watch([searchQuery, dateFrom, dateTo], () => {
-    aiInsights.value = [];
-    aiInsightSource.value = "fallback";
-    aiInsightStatus.value = "";
-    aiSuggestionItems.value = [];
-    aiSuggestionMode.value = "";
-    hasGeneratedAiInsight.value = false;
-});
-
-watch(selectedInsightLanguage, () => {
-    aiInsights.value = [];
-    aiInsightSource.value = "fallback";
-    aiInsightStatus.value = "";
-    aiSuggestionItems.value = [];
-    aiSuggestionMode.value = "";
-    hasGeneratedAiInsight.value = false;
-});
-
 onMounted(() => {
     loadSales();
     startPolling();
@@ -1017,8 +498,9 @@ onUnmounted(() => {
 
     <AppLayout title="Product Profit Analysis">
         <section class="sales-report-page">
-            <Card class="sales-report-card" title="Product Profit Analysis">
-                <div class="sales-report-filters">
+            <section class="dashboard-surface-card">
+            <h2 class="panel-title">Product Filters</h2>
+            <div class="sales-report-filters">
                     <div class="sales-report-filters__group">
                         <label
                             class="sales-report-filter sales-report-filter--search"
@@ -1052,7 +534,7 @@ onUnmounted(() => {
                     <div class="sales-report-filters__actions">
                         <p class="sales-report-meta">
                             Showing
-                            {{ formatCount(comparisonRows.length) }} row(s)
+                            {{ formatCount(productRows.length) }} product(s)
                         </p>
                         <button
                             type="button"
@@ -1063,6 +545,7 @@ onUnmounted(() => {
                         </button>
                     </div>
                 </div>
+            </section>
 
                 <div class="profit-analysis-summary">
                     <article
@@ -1072,8 +555,6 @@ onUnmounted(() => {
                         :class="{
                             'profit-analysis-summary__item--positive':
                                 metric.tone === 'positive',
-                            'profit-analysis-summary__item--negative':
-                                metric.tone === 'negative',
                         }"
                     >
                         <p class="profit-analysis-summary__label">
@@ -1092,165 +573,35 @@ onUnmounted(() => {
                 </div>
 
                 <p class="profit-analysis-note">
-                    Conversion logic: 1 {{ packedTypeInsightLabel }} =
-                    {{ SACK_TO_KILO }} kg (for packed-unit sales). Total weight
-                    sold: {{ formatCount(totalWeightSold) }} kg.
+                    Ranked by quantity sold across all products.
+                    {{ formatCount(totalOrders) }} sale(s) in this period.
                 </p>
-
-                <div class="profit-analysis-insight">
-                    <div class="profit-analysis-insight__head">
-                        <div class="profit-analysis-insight__title-wrap">
-                            <h4 class="profit-analysis-insight__title">
-                                Smart Insight
-                            </h4>
-                            <p class="profit-analysis-insight__subtitle">
-                                Clear, action-focused recommendations for
-                                pricing and selling decisions.
-                            </p>
-                        </div>
-
-                        <div class="profit-analysis-insight__controls">
-                            <label class="profit-analysis-insight__control">
-                                <span class="sales-report-filter__label">
-                                    Language / Dialect
-                                </span>
-                                <select
-                                    v-model="selectedInsightLanguage"
-                                    class="input"
-                                >
-                                    <option
-                                        v-for="option in insightLanguageOptions"
-                                        :key="option.value"
-                                        :value="option.value"
-                                    >
-                                        {{ option.label }}
-                                    </option>
-                                </select>
-                            </label>
-
-                            <button
-                                type="button"
-                                class="btn profit-analysis-insight__button"
-                                :disabled="isLoadingAiInsight"
-                                @click="refreshAiInsights"
-                            >
-                                {{
-                                    isLoadingAiInsight
-                                        ? "Generating..."
-                                        : "Generate Insight"
-                                }}
-                            </button>
-                        </div>
-                    </div>
-
-                    <div class="profit-analysis-insight__status-row">
-                        <span
-                            class="profit-analysis-insight__badge profit-analysis-insight__badge--language"
-                        >
-                            {{ selectedInsightLanguageLabel }}
-                        </span>
-                        <span
-                            class="profit-analysis-insight__badge"
-                            :class="{
-                                'profit-analysis-insight__badge--idle':
-                                    insightStatusVariant === 'idle',
-                                'profit-analysis-insight__badge--loading':
-                                    insightStatusVariant === 'loading',
-                                'profit-analysis-insight__badge--warning':
-                                    insightStatusVariant === 'warning',
-                                'profit-analysis-insight__badge--ai':
-                                    insightStatusVariant === 'ai',
-                                'profit-analysis-insight__badge--fallback':
-                                    insightStatusVariant === 'fallback',
-                            }"
-                        >
-                            {{ insightStatusLabel }}
-                        </span>
-                    </div>
-
-                    <p
-                        class="profit-analysis-insight__meta"
-                        :class="{
-                            'profit-analysis-insight__meta--warning':
-                                insightStatusVariant === 'warning',
-                        }"
-                    >
-                        {{ insightStatusDetail }}
-                    </p>
-
-                    <div
-                        v-if="insightParagraphText"
-                        class="profit-analysis-insight__paragraph-wrap"
-                    >
-                        <p class="profit-analysis-insight__paragraph">
-                            {{ insightParagraphText }}
-                        </p>
-                    </div>
-
-                    <section
-                        v-if="suggestionItems.length"
-                        class="profit-analysis-suggestions"
-                    >
-                        <h5
-                            class="profit-analysis-suggestions__title"
-                            :class="{
-                                'profit-analysis-suggestions__title--improve':
-                                    suggestionMode === 'improve',
-                                'profit-analysis-suggestions__title--maintain':
-                                    suggestionMode === 'maintain',
-                            }"
-                        >
-                            {{ suggestionTitle }}
-                        </h5>
-
-                        <p class="profit-analysis-suggestions__intro">
-                            {{ suggestionIntro }}
-                        </p>
-
-                        <ul class="profit-analysis-suggestions__list">
-                            <li
-                                v-for="(suggestion, index) in suggestionItems"
-                                :key="`${index}-${suggestion}`"
-                                class="profit-analysis-suggestions__item"
-                            >
-                                {{ suggestion }}
-                            </li>
-                        </ul>
-                    </section>
-
-                    <div v-else class="profit-analysis-insight__placeholder">
-                        <p class="profit-analysis-insight__placeholder-text">
-                            Your insight paragraph will appear here after you
-                            click Generate Insight.
-                        </p>
-                    </div>
-                </div>
 
                 <div class="profit-analysis-charts">
                     <article class="profit-analysis-chart">
                         <header class="profit-analysis-chart__head">
                             <h4 class="profit-analysis-chart__title">
-                                {{ packedTypeLabel }} vs Per Kilo Revenue
+                                Most Bought Products
                             </h4>
                             <p class="profit-analysis-chart__subtitle">
-                                Bar chart comparison
+                                Top {{ topBarRows.length || 0 }} by quantity
+                                sold
                             </p>
                         </header>
 
                         <div class="profit-analysis-chart__body">
                             <p
-                                v-if="!comparisonRows.length"
+                                v-if="!topBarRows.length"
                                 class="profit-analysis-chart__state"
                             >
-                                No data available for
-                                {{ packedTypeInsightLabel }}/per kilo
-                                comparison.
+                                No product sales found for the selected
+                                filters.
                             </p>
 
                             <VueApexCharts
                                 v-else
                                 type="bar"
-                                height="280"
+                                :height="barChartHeight"
                                 :options="barChartOptions"
                                 :series="barChartSeries"
                             />
@@ -1263,7 +614,8 @@ onUnmounted(() => {
                                 Revenue Trend Over Time
                             </h4>
                             <p class="profit-analysis-chart__subtitle">
-                                Line chart by method
+                                Top {{ trendRows.length || 0 }} products by
+                                date
                             </p>
                         </header>
 
@@ -1286,62 +638,79 @@ onUnmounted(() => {
                     </article>
                 </div>
 
-                <p class="profit-analysis-section-title">Comparison Table</p>
+                <section class="dashboard-surface-card">
+                <h2 class="panel-title">Product Ranking</h2>
 
                 <Table
-                    :columns="['Product', 'Type', 'Qty Sold', 'Price', 'Total']"
+                    :columns="[
+                        'Rank',
+                        'Product',
+                        'Qty Sold',
+                        'Orders',
+                        'Avg Price',
+                        'Total Sales',
+                        'Share',
+                    ]"
                 >
-                    <tr v-if="!comparisonRows.length">
-                        <td colspan="5" class="sales-report-empty">
-                            No comparison rows found for this filter.
+                    <tr v-if="!productRows.length">
+                        <td colspan="7" class="sales-report-empty">
+                            No product sales found for this filter.
                         </td>
                     </tr>
 
-                    <tr v-for="row in comparisonRows" :key="row.id">
-                        <td>{{ row.productName }}</td>
+                    <tr
+                        v-for="row in productRows"
+                        :key="row.id"
+                        :class="{
+                            'profit-analysis-row--top': row.rank === 1,
+                        }"
+                    >
                         <td>
                             <span
-                                class="profit-analysis-type"
+                                class="profit-analysis-rank"
                                 :class="{
-                                    'profit-analysis-type--bag':
-                                        row.method === METHOD_BAG,
-                                    'profit-analysis-type--sack':
-                                        row.method === METHOD_SACK,
-                                    'profit-analysis-type--kilo':
-                                        row.method === METHOD_KILO,
+                                    'profit-analysis-rank--1': row.rank === 1,
+                                    'profit-analysis-rank--2': row.rank === 2,
+                                    'profit-analysis-rank--3': row.rank === 3,
                                 }"
                             >
-                                {{ row.methodLabel }}
+                                {{ row.rank }}
                             </span>
                         </td>
+                        <td>{{ row.productName }}</td>
                         <td class="profit-analysis-qty">
-                            {{ formatQuantityByMethod(row) }}
+                            {{ row.qtyLabel }}
                         </td>
-                        <td>
-                            ₱ {{ formatCurrency(row.averagePrice) }}
-                            {{
-                                row.method === METHOD_BAG
-                                    ? "/bag"
-                                    : row.method === METHOD_SACK
-                                      ? "/sack"
-                                      : "/kg"
-                            }}
-                        </td>
+                        <td>{{ formatCount(row.orderCount) }}</td>
+                        <td>₱ {{ formatCurrency(row.averagePrice) }}</td>
                         <td class="profit-analysis-profit">
                             ₱ {{ formatCurrency(row.totalSales) }}
+                        </td>
+                        <td>
+                            <div class="profit-analysis-share">
+                                <span>{{ formatPercent(row.share) }}%</span>
+                                <span class="profit-analysis-share__track">
+                                    <i
+                                        class="profit-analysis-share__fill"
+                                        :style="{
+                                            width: `${Math.min(row.share, 100)}%`,
+                                        }"
+                                    />
+                                </span>
+                            </div>
                         </td>
                     </tr>
                 </Table>
 
                 <div class="report-total">
-                    Best Row:
+                    Most Bought:
                     {{
-                        topComparisonRow
-                            ? `${topComparisonRow.productName} (${topComparisonRow.methodLabel})`
+                        topProduct
+                            ? `${topProduct.productName} (${topProduct.qtyLabel})`
                             : "-"
                     }}
                 </div>
-            </Card>
+            </section>
         </section>
     </AppLayout>
 </template>

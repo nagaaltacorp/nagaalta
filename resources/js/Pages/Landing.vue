@@ -210,19 +210,20 @@ const submit = () => {
                 :src="logoUrl"
                 alt="Naga Alta Agri Corp logo"
             />
+            <p class="landing__kicker">Office of Agricultural Operations</p>
             <div class="landing__badge">Agricultural Management System</div>
             <h1 class="landing__title">Naga Alta Agri Corp</h1>
             <p class="landing__tagline">
-                Securely manage inventory, sales, trucking, and workforce
-                operations in one unified platform.
+                Official platform for inventory, sales, merchandise assessment,
+                and workforce records.
             </p>
         </section>
 
         <section class="landing__right">
             <div class="login-card">
-                <h2 class="login-card__title">Admin Login</h2>
+                <h2 class="login-card__title">Authorized Access</h2>
                 <p class="login-card__subtitle">
-                    Sign in to access the dashboard.
+                    Sign in to the official records system.
                 </p>
 
                 <form class="login-form" @submit.prevent="submit">
@@ -275,7 +276,7 @@ const submit = () => {
                         type="submit"
                         :disabled="form.processing || isExiting"
                     >
-                        {{ form.processing ? "Signing in..." : "Login" }}
+                        {{ form.processing ? "Verifying..." : "Enter System" }}
                     </button>
                 </form>
             </div>

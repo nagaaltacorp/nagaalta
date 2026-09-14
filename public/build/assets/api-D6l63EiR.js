@@ -1,0 +1,1 @@
+import{M as e}from"./app-CKmjFLPe.js";const t=e.create({baseURL:"/api",withCredentials:!0,xsrfCookieName:"XSRF-TOKEN",xsrfHeaderName:"X-XSRF-TOKEN",headers:{"X-Requested-With":"XMLHttpRequest",Accept:"application/json"}});export{t as a};

@@ -51,17 +51,6 @@ class ManagerBranchScope
         return $query->whereIn('branch_id', $ids);
     }
 
-    public static function scopePurchases(Builder $query, ?User $user): Builder
-    {
-        $ids = self::branchIdsFor($user);
-
-        if ($ids === null) {
-            return $query;
-        }
-
-        return $query->whereIn('branch_id', $ids);
-    }
-
     public static function scopeBranches(Builder $query, ?User $user): Builder
     {
         $ids = self::branchIdsFor($user);

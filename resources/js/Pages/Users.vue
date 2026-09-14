@@ -4,7 +4,6 @@ import { UserPlus } from "lucide-vue-next";
 import { onBeforeUnmount, onMounted, reactive, ref } from "vue";
 import AppLayout from "../components/layout/AppLayout.vue";
 import Button from "../components/ui/Button.vue";
-import Card from "../components/ui/Card.vue";
 import Input from "../components/ui/Input.vue";
 import Modal from "../components/ui/Modal.vue";
 import Table from "../components/ui/Table.vue";
@@ -88,8 +87,9 @@ onMounted(loadUsers);
 
     <AppLayout title="Users">
         <div class="users-page">
-            <Card title="User Management">
-                <div class="toolbar">
+            <section class="dashboard-surface-card">
+            <h2 class="panel-title">Users</h2>
+            <div class="toolbar">
                     <Button @click="showModal = true">Add User</Button>
                 </div>
 
@@ -112,8 +112,8 @@ onMounted(loadUsers);
                         <td>{{ user.is_active ? "Active" : "Inactive" }}</td>
                     </tr>
                 </Table>
-            </Card>
 
+            </section>
             <Modal
                 :open="showModal"
                 title="Create User"

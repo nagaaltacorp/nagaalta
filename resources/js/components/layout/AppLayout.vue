@@ -62,18 +62,24 @@ onBeforeUnmount(() => {
 
 <template>
     <div
-        class="app-shell"
-        :class="{ 'app-shell--collapsed': sidebarCollapsed }"
+        class="app-shell grid h-screen overflow-hidden bg-naac-bg text-green-900 max-md:h-auto max-md:min-h-screen max-md:grid-cols-1 max-md:overflow-visible"
+        :class="
+            sidebarCollapsed ? 'grid-cols-[72px_1fr]' : 'grid-cols-[236px_1fr]'
+        "
     >
-        <Sidebar />
+        <Sidebar :collapsed="sidebarCollapsed" />
 
-        <div class="app-shell__main">
-            <Navbar
-                :title="title"
-                :collapsed="sidebarCollapsed"
-                @toggle-sidebar="toggleSidebar"
-            />
-            <main class="content-area">
+        <div class="flex min-h-0 min-w-0 flex-col overflow-hidden max-md:h-auto max-md:overflow-visible">
+            <div class="sticky top-0 z-30 shrink-0">
+                <Navbar
+                    :title="title"
+                    :collapsed="sidebarCollapsed"
+                    @toggle-sidebar="toggleSidebar"
+                />
+            </div>
+            <main
+                class="scrollbar-page grid min-h-0 min-w-0 flex-1 content-start gap-4 overflow-auto bg-naac-bg px-5 py-4 max-md:flex-none max-md:overflow-visible"
+            >
                 <slot />
             </main>
         </div>

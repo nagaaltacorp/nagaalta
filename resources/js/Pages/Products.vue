@@ -6,16 +6,15 @@ import {
     ChevronRight,
     Filter,
     PackagePlus,
-    Plus,
+    ImagePlus,
     Search,
     SquarePen,
     TriangleAlert,
     Trash2,
 } from "lucide-vue-next";
-import { computed, onMounted, reactive, ref, watch } from "vue";
+import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from "vue";
 import AppLayout from "../components/layout/AppLayout.vue";
 import Button from "../components/ui/Button.vue";
-import Card from "../components/ui/Card.vue";
 import Input from "../components/ui/Input.vue";
 import Modal from "../components/ui/Modal.vue";
 import Table from "../components/ui/Table.vue";
@@ -41,6 +40,30 @@ const form = reactive({
     description: "",
     image: null,
 });
+const imagePreviewUrl = ref("");
+const existingImageUrl = ref("");
+const isDraggingImage = ref(false);
+
+const displayImageUrl = computed(
+    () => imagePreviewUrl.value || existingImageUrl.value,
+);
+
+const clearImagePreview = () => {
+    if (imagePreviewUrl.value) {
+        URL.revokeObjectURL(imagePreviewUrl.value);
+        imagePreviewUrl.value = "";
+    }
+};
+
+const assignImageFile = (file) => {
+    if (!file || !String(file.type || "").startsWith("image/")) {
+        return;
+    }
+
+    form.image = file;
+    clearImagePreview();
+    imagePreviewUrl.value = URL.createObjectURL(file);
+};
 
 const loadProducts = async () => {
     const { data } = await api.get("/products");
@@ -213,6 +236,9 @@ const resetForm = () => {
     form.description = "";
     form.image = null;
     editingId.value = null;
+    existingImageUrl.value = "";
+    isDraggingImage.value = false;
+    clearImagePreview();
 };
 
 const openCreate = () => {
@@ -227,12 +253,20 @@ const openEdit = (product) => {
     form.price = product.price;
     form.description = product.description ?? "";
     form.image = null;
+    existingImageUrl.value = product.image || "";
+    clearImagePreview();
     editingId.value = product.id;
     showModal.value = true;
 };
 
 const onImageChange = (event) => {
-    form.image = event.target.files?.[0] ?? null;
+    assignImageFile(event.target.files?.[0] ?? null);
+    event.target.value = "";
+};
+
+const onImageDrop = (event) => {
+    isDraggingImage.value = false;
+    assignImageFile(event.dataTransfer?.files?.[0] ?? null);
 };
 
 const saveProduct = async () => {
@@ -294,15 +328,20 @@ const confirmDelete = async () => {
 };
 
 onMounted(loadProducts);
+
+onBeforeUnmount(() => {
+    clearImagePreview();
+});
 </script>
 
 <template>
-    <Head title="Products" />
+    <Head title="Products Setup" />
 
-    <AppLayout title="Products">
+    <AppLayout title="Products Setup">
         <div class="products-page">
-            <Card title="Product Management">
-                <div class="products-toolbar">
+            <section class="dashboard-surface-card">
+            <h2 class="panel-title">Products Setup</h2>
+            <div class="products-toolbar">
                     <div class="products-controls">
                         <label
                             class="products-control products-control--search"
@@ -364,12 +403,13 @@ onMounted(loadProducts);
                         'Category',
                         'Unit',
                         'Price',
+                        'VAT',
                         'Description',
                         'Actions',
                     ]"
                 >
                     <tr v-if="filteredProducts.length === 0">
-                        <td class="products-empty" colspan="7">
+                        <td class="products-empty" colspan="8">
                             No products match your current search/filters.
                         </td>
                     </tr>
@@ -388,6 +428,22 @@ onMounted(loadProducts);
                         <td>{{ product.category || "-" }}</td>
                         <td>{{ product.unit || "-" }}</td>
                         <td>{{ Number(product.price).toFixed(2) }}</td>
+                        <td>
+                            <span
+                                class="vat-badge"
+                                :class="
+                                    product.is_vatable
+                                        ? 'vat-badge--on'
+                                        : 'vat-badge--off'
+                                "
+                            >
+                                {{
+                                    product.is_vatable
+                                        ? `VAT ${Number(product.vat_rate || 0).toFixed(2)}%`
+                                        : "No VAT"
+                                }}
+                            </span>
+                        </td>
                         <td>{{ product.description || "-" }}</td>
                         <td>
                             <div class="actions">
@@ -457,14 +513,15 @@ onMounted(loadProducts);
                         </button>
                     </div>
                 </div>
-            </Card>
 
+            </section>
             <Modal
                 :open="showModal"
                 :title="editingId ? 'Edit Product' : 'Create Product'"
+                wide
                 @close="showModal = false"
             >
-                <form class="form-grid" @submit.prevent="saveProduct">
+                <form class="products-form" @submit.prevent="saveProduct">
                     <div class="products-modal-head">
                         <PackagePlus class="products-modal-head-icon" />
                         <p class="products-modal-head-text">
@@ -476,52 +533,82 @@ onMounted(loadProducts);
                         </p>
                     </div>
 
-                    <Input
-                        v-model="form.name"
-                        label="Name"
-                        placeholder="Product name"
-                    />
-                    <Input
-                        v-model="form.category"
-                        label="Category"
-                        placeholder="e.g. Seeds, Fertilizer"
-                    />
-                    <label class="form-field">
-                        <span class="form-field__label">Unit</span>
-                        <select v-model="form.unit" class="input">
-                            <option
-                                v-for="unit in unitChoices"
-                                :key="unit"
-                                :value="unit"
-                            >
-                                {{ unit }}
-                            </option>
-                        </select>
-                    </label>
-                    <Input
-                        v-model="form.price"
-                        type="number"
-                        label="Price"
-                        placeholder="0.00"
-                    />
-                    <Input
-                        v-model="form.description"
-                        label="Description"
-                        placeholder="Product description"
-                    />
-                    <label class="form-field">
-                        <span class="form-field__label">Product Image</span>
+                    <div class="products-form__fields">
+                        <Input
+                            v-model="form.name"
+                            label="Name"
+                            placeholder="Product name"
+                        />
+                        <Input
+                            v-model="form.category"
+                            label="Category"
+                            placeholder="e.g. Seeds, Fertilizer"
+                        />
+                        <label class="form-field">
+                            <span class="form-field__label">Unit</span>
+                            <select v-model="form.unit" class="input">
+                                <option
+                                    v-for="unit in unitChoices"
+                                    :key="unit"
+                                    :value="unit"
+                                >
+                                    {{ unit }}
+                                </option>
+                            </select>
+                        </label>
+                        <Input
+                            v-model="form.price"
+                            type="number"
+                            label="Price"
+                            placeholder="0.00"
+                        />
+                        <div class="products-form__full">
+                            <Input
+                                v-model="form.description"
+                                label="Description"
+                                placeholder="Product description"
+                            />
+                        </div>
+                    </div>
+
+                    <label
+                        class="products-dropzone"
+                        :class="{
+                            'products-dropzone--active': isDraggingImage,
+                            'products-dropzone--filled': Boolean(
+                                displayImageUrl,
+                            ),
+                        }"
+                        @dragenter.prevent="isDraggingImage = true"
+                        @dragover.prevent="isDraggingImage = true"
+                        @dragleave.prevent="isDraggingImage = false"
+                        @drop.prevent="onImageDrop"
+                    >
                         <input
-                            class="input"
+                            class="products-dropzone__input"
                             type="file"
                             accept="image/*"
                             @change="onImageChange"
                         />
+
+                        <img
+                            v-if="displayImageUrl"
+                            :src="displayImageUrl"
+                            alt="Product preview"
+                            class="products-dropzone__preview"
+                        />
+
+                        <div v-else class="products-dropzone__placeholder">
+                            <ImagePlus class="products-dropzone__icon" />
+                            <span>Drop product image here</span>
+                            <small>or click to browse</small>
+                        </div>
                     </label>
-                    <p v-if="editingId" class="form-hint">
+
+                    <p v-if="editingId" class="form-hint products-form__hint">
                         Leave image empty to keep the current product image.
                     </p>
-                    <div class="form-actions">
+                    <div class="form-actions products-form__actions">
                         <Button type="submit" :disabled="isSaving">
                             {{ isSaving ? "Saving..." : "Save" }}
                         </Button>

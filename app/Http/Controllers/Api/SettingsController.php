@@ -16,6 +16,7 @@ class SettingsController extends Controller
             'timezone' => 'UTC',
             'currency' => 'USD',
             'low_stock_threshold' => 10,
+            'default_vat_rate' => 12.00,
         ]);
 
         return response()->json(['data' => $settings]);
