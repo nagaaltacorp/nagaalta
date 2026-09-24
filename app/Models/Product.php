@@ -12,6 +12,7 @@ class Product extends Model
     protected $fillable = [
         'name',
         'category',
+        'company_name',
         'unit',
         'price',
         'description',
@@ -28,6 +29,8 @@ class Product extends Model
     protected $appends = [
         'vat_amount',
         'price_with_vat',
+        'unit_size',
+        'unit_label',
     ];
 
     protected $casts = [
@@ -152,6 +155,37 @@ class Product extends Model
         $physical = $this->physicalRetailQuantity($wholesaleQuantity, $remainder);
 
         return SaleQuantity::round(max(0, $physical - $this->allowedRetailLoss()));
+    }
+
+    public function getUnitSizeAttribute(): ?string
+    {
+        return $this->parsedUnitParts()['size'];
+    }
+
+    public function getUnitLabelAttribute(): string
+    {
+        return $this->parsedUnitParts()['label'];
+    }
+
+    public function parsedUnitParts(): array
+    {
+        $text = trim((string) $this->unit);
+
+        if (preg_match('/^(\d+(?:\.\d+)?)\s+(.+)$/', $text, $matches) === 1) {
+            return [
+                'size' => $matches[1],
+                'name' => $matches[2],
+                'label' => $matches[1].' '.$matches[2],
+            ];
+        }
+
+        $name = $text !== '' ? $text : 'pcs';
+
+        return [
+            'size' => null,
+            'name' => $name,
+            'label' => $name,
+        ];
     }
 
     public function getVatAmountAttribute(): float

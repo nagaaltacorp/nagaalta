@@ -10,7 +10,6 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Mail;
 use Illuminate\Support\Facades\Storage;
-use Illuminate\Support\Str;
 use Illuminate\Validation\Rule;
 
 class EmployeeController extends Controller
@@ -116,9 +115,10 @@ class EmployeeController extends Controller
 
         return response()->json([
             'message' => $credentialsSent
-                ? 'Employee created successfully. Login credentials were sent to the employee email.'
-                : 'Employee created successfully, but credentials email could not be sent. Please check mail settings.',
+                ? 'Employee created successfully. Username '.$createdUser->user_name.' was saved from the first and last name.'
+                : 'Employee created successfully. Username '.$createdUser->user_name.' was saved from the first and last name, but the credentials email could not be sent.',
             'credentials_sent' => $credentialsSent,
+            'username' => $createdUser->user_name,
             'data' => $employee,
         ], 201);
     }
@@ -192,21 +192,29 @@ class EmployeeController extends Controller
 
     private function generateUniqueUsername(string $firstName, ?string $lastName): string
     {
-        $base = Str::of(trim($firstName . ' ' . ($lastName ?? '')))
-            ->lower()
-            ->replaceMatches('/[^a-z0-9]+/', '.')
-            ->trim('.')
-            ->value();
+        $parts = [];
+
+        foreach ([$firstName, $lastName] as $part) {
+            $cleaned = strtolower(trim((string) $part));
+            $cleaned = preg_replace('/@.*/', '', $cleaned) ?? '';
+            $cleaned = preg_replace('/[^a-z0-9]+/', '', $cleaned) ?? '';
+
+            if ($cleaned !== '') {
+                $parts[] = $cleaned;
+            }
+        }
+
+        $base = implode('.', $parts);
 
         if ($base === '') {
-            $base = 'user';
+            $base = 'employee';
         }
 
         $username = $base;
-        $suffix = 1;
+        $suffix = 2;
 
-        while (User::where('user_name', $username)->exists()) {
-            $username = $base . $suffix;
+        while (User::query()->whereRaw('LOWER(user_name) = ?', [strtolower($username)])->exists()) {
+            $username = $base.'.'.$suffix;
             $suffix++;
         }
 

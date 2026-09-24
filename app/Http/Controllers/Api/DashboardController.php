@@ -116,7 +116,7 @@ class DashboardController extends Controller
             });
         }
 
-        return (float) $query->sum('total_price');
+        return (float) $query->collected()->sum('total_price');
     }
 
     private function countUsers(?array $branchIds): int
@@ -150,7 +150,7 @@ class DashboardController extends Controller
             ->leftJoin('employees', 'users.employee_id', '=', 'employees.id')
             ->leftJoin('branches', 'employees.branch_id', '=', 'branches.id');
 
-        return ManagerBranchScope::constrainJoinedSales($query, $branchIds);
+        return ManagerBranchScope::constrainJoinedSales($query, $branchIds)->collected();
     }
 
     private function resolveDateRange(Request $request): array
@@ -223,7 +223,7 @@ class DashboardController extends Controller
     private function buildSalesByBranchSummary(Carbon $startDate, Carbon $endDate, ?array $branchIds): array
     {
         return $this->salesJoinQuery($branchIds)
-            ->whereBetween('sales.created_at', [$startDate, $endDate])
+            ->whereRaw(Sale::recognizedAtSql().' BETWEEN ? AND ?', [$startDate, $endDate])
             ->selectRaw('branches.id as branch_id')
             ->selectRaw('branches.name as branch_name')
             ->selectRaw('COUNT(sales.id) as sale_count')
@@ -272,11 +272,11 @@ class DashboardController extends Controller
         }
 
         $dailyRows = $this->salesJoinQuery($branchIds)
-            ->whereBetween('sales.created_at', [$startDate, $endDate])
-            ->selectRaw('DATE(sales.created_at) as sale_date')
+            ->whereRaw(Sale::recognizedAtSql().' BETWEEN ? AND ?', [$startDate, $endDate])
+            ->selectRaw('DATE('.Sale::recognizedAtSql().') as sale_date')
             ->selectRaw('branches.id as branch_id')
             ->selectRaw('COALESCE(SUM(sales.total_price), 0) as total_sales')
-            ->groupByRaw('DATE(sales.created_at), branches.id')
+            ->groupByRaw('DATE('.Sale::recognizedAtSql().'), branches.id')
             ->orderBy('sale_date')
             ->get();
 
@@ -361,7 +361,7 @@ class DashboardController extends Controller
             ->all();
 
         $selectedBranches = $this->salesJoinQuery($branchIds)
-            ->whereBetween('sales.created_at', [$monthStart, $monthEnd])
+            ->whereRaw(Sale::recognizedAtSql().' BETWEEN ? AND ?', [$monthStart, $monthEnd])
             ->selectRaw('branches.id as branch_id')
             ->selectRaw('branches.name as branch_name')
             ->selectRaw('COALESCE(SUM(sales.total_price), 0) as total_sales')
@@ -390,11 +390,11 @@ class DashboardController extends Controller
         }
 
         $dailyRows = $this->salesJoinQuery($branchIds)
-            ->whereBetween('sales.created_at', [$monthStart, $monthEnd])
-            ->selectRaw('DATE(sales.created_at) as sale_date')
+            ->whereRaw(Sale::recognizedAtSql().' BETWEEN ? AND ?', [$monthStart, $monthEnd])
+            ->selectRaw('DATE('.Sale::recognizedAtSql().') as sale_date')
             ->selectRaw('branches.id as branch_id')
             ->selectRaw('COALESCE(SUM(sales.total_price), 0) as total_sales')
-            ->groupByRaw('DATE(sales.created_at), branches.id')
+            ->groupByRaw('DATE('.Sale::recognizedAtSql().'), branches.id')
             ->orderBy('sale_date')
             ->get();
 
@@ -456,7 +456,8 @@ class DashboardController extends Controller
         }
 
         return $query
-            ->latest('created_at')
+            ->collected()
+            ->orderByRaw(Sale::recognizedAtSql().' DESC')
             ->limit($limit)
             ->get()
             ->map(function (Sale $sale) {
@@ -472,7 +473,7 @@ class DashboardController extends Controller
                     'quantity_display' => $sale->quantity_display,
                     'total_price' => round((float) $sale->total_price, 2),
                     'processed_by' => $processorName,
-                    'sold_at' => $sale->created_at?->toDateTimeString(),
+                    'sold_at' => $sale->recognizedAt()?->toDateTimeString(),
                 ];
             })
             ->values()
@@ -488,7 +489,7 @@ class DashboardController extends Controller
             ->join('products', 'sales.product_id', '=', 'products.id')
             ->leftJoin('users', 'sales.processed_by_user_id', '=', 'users.id')
             ->leftJoin('employees', 'users.employee_id', '=', 'employees.id')
-            ->whereBetween('sales.created_at', [$startDate, $endDate]);
+            ->whereRaw(Sale::recognizedAtSql().' BETWEEN ? AND ?', [$startDate, $endDate]);
 
         $query = ManagerBranchScope::constrainJoinedSales($query, $branchIds);
 

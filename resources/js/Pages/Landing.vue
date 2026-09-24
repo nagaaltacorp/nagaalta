@@ -204,26 +204,35 @@ const submit = () => {
     <Head title="Welcome" />
 
     <main class="landing" :class="{ 'landing--exit': isExiting }">
-        <section class="landing__left">
-            <img
-                class="landing__logo"
-                :src="logoUrl"
-                alt="Naga Alta Agri Corp logo"
-            />
-            <p class="landing__kicker">Office of Agricultural Operations</p>
-            <div class="landing__badge">Agricultural Management System</div>
-            <h1 class="landing__title">Naga Alta Agri Corp</h1>
-            <p class="landing__tagline">
-                Official platform for inventory, sales, merchandise assessment,
-                and workforce records.
-            </p>
+        <section class="gov-identity">
+            <p class="gov-identity__banner">Official records system</p>
+            <div class="gov-identity__body">
+                <img
+                    class="landing__logo"
+                    :src="logoUrl"
+                    alt="Naga Alta Agri Corp logo"
+                />
+                <p class="landing__kicker">Office of Agricultural Operations</p>
+                <h1 class="landing__title">Naga Alta Agri Corp</h1>
+                <span class="gov-rule" aria-hidden="true"></span>
+                <p class="landing__badge">Agricultural Management System</p>
+                <p class="landing__tagline">
+                    Official platform for inventory, sales, merchandise
+                    assessment, and workforce records.
+                </p>
+            </div>
+            <ul class="gov-list">
+                <li>Use your assigned office account.</li>
+                <li>Do not share your password.</li>
+                <li>Sign out when you leave this workstation.</li>
+            </ul>
         </section>
 
-        <section class="landing__right">
+        <section class="gov-access">
             <div class="login-card">
-                <h2 class="login-card__title">Authorized Access</h2>
+                <h2 class="login-card__title">Sign in</h2>
                 <p class="login-card__subtitle">
-                    Sign in to the official records system.
+                    Enter your credentials to access the records system.
                 </p>
 
                 <form class="login-form" @submit.prevent="submit">
@@ -276,10 +285,14 @@ const submit = () => {
                         type="submit"
                         :disabled="form.processing || isExiting"
                     >
-                        {{ form.processing ? "Verifying..." : "Enter System" }}
+                        {{ form.processing ? "Verifying..." : "Sign in" }}
                     </button>
                 </form>
             </div>
+            <footer class="gov-footer">
+                <p>Naga Alta Agri Corp</p>
+                <p>For official use only. Unauthorized access is prohibited.</p>
+            </footer>
         </section>
 
         <div

@@ -8,7 +8,9 @@ use App\Models\Product;
 use App\Models\Sale;
 use App\Models\User;
 use App\Services\CartDiscount;
+use App\Services\DailySalesReportService;
 use App\Services\ManagerBranchScope;
+use App\Services\SalesReportExport;
 use App\Support\SaleQuantity;
 use Illuminate\Database\QueryException;
 use Illuminate\Http\Exceptions\HttpResponseException;
@@ -33,6 +35,37 @@ class SaleController extends Controller
             ->get();
 
         return response()->json(['data' => $sales]);
+    }
+
+    public function export(Request $request, string $format)
+    {
+        $format = strtolower($format);
+
+        if (! in_array($format, ['pdf', 'excel'], true)) {
+            abort(404);
+        }
+
+        $validated = $request->validate([
+            'search' => ['nullable', 'string', 'max:150'],
+            'from' => ['nullable', 'date'],
+            'to' => ['nullable', 'date'],
+            'payment' => ['nullable', 'in:all,cash,utang'],
+        ]);
+
+        $sales = $this->salesForReport($request, $validated);
+        $stamp = now()->timezone(DailySalesReportService::TIMEZONE)->format('Ymd-Hi');
+
+        if ($format === 'pdf') {
+            return response(SalesReportExport::pdf($sales, $validated), 200, [
+                'Content-Type' => 'application/pdf',
+                'Content-Disposition' => 'attachment; filename="sales-report-'.$stamp.'.pdf"',
+            ]);
+        }
+
+        return response(SalesReportExport::excel($sales), 200, [
+            'Content-Type' => 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+            'Content-Disposition' => 'attachment; filename="sales-report-'.$stamp.'.xlsx"',
+        ]);
     }
 
     public function store(Request $request)
@@ -128,6 +161,71 @@ class SaleController extends Controller
         return response()->json(['data' => $sales]);
     }
 
+    private function salesForReport(Request $request, array $filters)
+    {
+        $query = ManagerBranchScope::scopeSales(
+            Sale::with([
+                'product',
+                'processedBy:id,name,user_name,email',
+            ])->collected(),
+            $request->user(),
+        );
+
+        $timezone = DailySalesReportService::TIMEZONE;
+
+        if (! empty($filters['from'])) {
+            $from = Carbon::parse((string) $filters['from'], $timezone)->startOfDay();
+            $query->whereRaw(Sale::recognizedAtSql().' >= ?', [$from]);
+        }
+
+        if (! empty($filters['to'])) {
+            $to = Carbon::parse((string) $filters['to'], $timezone)->endOfDay();
+            $query->whereRaw(Sale::recognizedAtSql().' <= ?', [$to]);
+        }
+
+        $payment = (string) ($filters['payment'] ?? 'all');
+
+        if ($payment === 'utang') {
+            $query->whereRaw('LOWER(sales.payment_method) = ?', ['utang']);
+        } elseif ($payment === 'cash') {
+            $query->where(function ($cash) {
+                $cash
+                    ->whereNull('sales.payment_method')
+                    ->orWhereRaw('LOWER(sales.payment_method) != ?', ['utang']);
+            });
+        }
+
+        $sales = $query->latest()->get();
+        $keyword = strtolower(trim((string) ($filters['search'] ?? '')));
+
+        if ($keyword === '') {
+            return $sales;
+        }
+
+        return $sales->filter(function (Sale $sale) use ($keyword) {
+            $recognized = $sale->recognizedAt()?->timezone(DailySalesReportService::TIMEZONE);
+            $haystack = strtolower(implode(' ', array_filter([
+                $sale->sale_number,
+                $sale->product?->name,
+                $sale->unit_type,
+                $sale->product?->unit,
+                $sale->quantity_display,
+                number_format((float) $sale->total_price, 2, '.', ''),
+                (float) $sale->discount_percent > 0
+                    ? number_format((float) $sale->discount_percent, 2, '.', '').'%'
+                    : '',
+                $sale->processedBy?->name,
+                $sale->processedBy?->user_name,
+                $sale->processedBy?->email,
+                $sale->payment_method,
+                $recognized?->format('M j, Y g:i A'),
+                $recognized?->format('Y-m-d'),
+            ])));
+
+            return str_contains($haystack, $keyword);
+        })->values();
+    }
+
     private function validateSalePayload(Request $request): array
     {
         $validated = $request->validate([
@@ -135,13 +233,15 @@ class SaleController extends Controller
             'quantity' => ['required'],
             'processed_by_user_id' => ['nullable', 'exists:users,id'],
             'user_id' => ['nullable', 'exists:users,id'],
-            'unit_type' => ['nullable', 'string', 'max:20'],
+            'unit_type' => ['nullable', 'string', 'max:50'],
             'discount_percent' => ['nullable', 'numeric', 'min:0', 'max:100'],
             'discount_password' => ['nullable', 'string', 'max:50'],
             'discount_token' => ['nullable', 'string', 'max:80'],
             'sale_number' => ['nullable', 'string', 'max:32'],
             'idempotency_key' => ['nullable', 'string', 'max:100'],
             'payment_method' => ['nullable', 'string', 'max:20'],
+            'borrower_name' => ['nullable', 'string', 'max:150'],
+            'due_date' => ['nullable', 'date'],
             'processed_at_utc' => ['nullable', 'date'],
             'processed_at' => ['nullable', 'date'],
             'sold_at' => ['nullable', 'date'],
@@ -158,6 +258,27 @@ class SaleController extends Controller
 
         $validated['quantity'] = $quantity;
         $validated['quantity_label'] = $quantityLabel;
+        $validated['payment_method'] = $this->normalizePaymentMethod($validated['payment_method'] ?? null);
+
+        if ($validated['payment_method'] === 'utang') {
+            $borrowerName = trim((string) ($validated['borrower_name'] ?? ''));
+            $dueDate = trim((string) ($validated['due_date'] ?? ''));
+
+            if ($borrowerName === '') {
+                throw ValidationException::withMessages([
+                    'borrower_name' => 'Enter the name of the person who will pay this utang.',
+                ]);
+            }
+
+            if ($dueDate === '') {
+                throw ValidationException::withMessages([
+                    'due_date' => 'Enter the date this utang is due.',
+                ]);
+            }
+
+            $validated['borrower_name'] = $borrowerName;
+            $validated['due_date'] = Carbon::parse($dueDate)->toDateString();
+        }
 
         return $validated;
     }
@@ -235,6 +356,13 @@ class SaleController extends Controller
         );
         $discount = CartDiscount::applyToTotal($totalPrice, $discountPercent);
         $totalPrice = $discount['total'];
+        $paymentMethod = $validated['payment_method'] ?? 'cash';
+        $this->assertSameUtangOnTicket(
+            $ticketSaleNumber,
+            $paymentMethod,
+            $validated['borrower_name'] ?? null,
+            $validated['due_date'] ?? null,
+        );
 
         $attributes = [
             'product_id' => $product->id,
@@ -247,7 +375,9 @@ class SaleController extends Controller
             'discount_percent' => $discount['percent'],
             'discount_amount' => $discount['amount'],
             'total_price' => $totalPrice,
-            'payment_method' => $validated['payment_method'] ?? 'cash',
+            'payment_method' => $paymentMethod,
+            'borrower_name' => $paymentMethod === 'utang' ? $validated['borrower_name'] : null,
+            'due_date' => $paymentMethod === 'utang' ? $validated['due_date'] : null,
         ];
 
         if ($ticketSaleNumber !== null) {
@@ -445,7 +575,60 @@ class SaleController extends Controller
         }
 
         // Keep other unit labels (pcs, box, tray, etc.) instead of dropping them.
-        return substr($normalizedUnitType, 0, 20);
+        return substr($normalizedUnitType, 0, 50);
+    }
+
+    private function normalizePaymentMethod(?string $paymentMethod): string
+    {
+        $method = strtolower(trim((string) $paymentMethod));
+
+        if (in_array($method, ['utang', 'borrow', 'barrow', 'debt'], true)) {
+            return 'utang';
+        }
+
+        return $method !== '' ? $method : 'cash';
+    }
+
+    private function assertSameUtangOnTicket(
+        ?string $saleNumber,
+        string $paymentMethod,
+        ?string $borrowerName,
+        ?string $dueDate,
+    ): void {
+        if ($saleNumber === null || trim($saleNumber) === '') {
+            return;
+        }
+
+        $existing = Sale::query()
+            ->where('sale_number', $saleNumber)
+            ->first();
+
+        if (!$existing) {
+            return;
+        }
+
+        $existingMethod = strtolower(trim((string) ($existing->payment_method ?: 'cash')));
+
+        if ($existingMethod !== $paymentMethod) {
+            throw ValidationException::withMessages([
+                'payment_method' => 'Use the same payment for every item on this receipt. Do not mix utang with cash.',
+            ]);
+        }
+
+        if ($paymentMethod !== 'utang') {
+            return;
+        }
+
+        $existingDue = optional($existing->due_date)?->toDateString();
+
+        if (
+            strcasecmp(trim((string) $existing->borrower_name), trim((string) $borrowerName)) !== 0
+            || $existingDue !== $dueDate
+        ) {
+            throw ValidationException::withMessages([
+                'borrower_name' => 'Use the same borrower name and due date on every item in this utang.',
+            ]);
+        }
     }
 
     private function resolveClientProcessedAt(array $validated): ?Carbon

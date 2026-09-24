@@ -237,10 +237,14 @@ class DailySalesReportService
             ->values()
             ->all();
 
+        $collected = $sales->reject(fn (Sale $sale) => $sale->isUnpaidUtang());
+        $utangTotal = round((float) $sales->filter(fn (Sale $sale) => $sale->isUnpaidUtang())->sum('total_price'), 2);
+
         return [
             'receipt_count' => $receipts,
             'line_count' => $sales->count(),
-            'total_sales' => round((float) $sales->sum('total_price'), 2),
+            'total_sales' => round((float) $collected->sum('total_price'), 2),
+            'utang_total' => $utangTotal,
             'total_vat' => round((float) $sales->sum('vat_amount'), 2),
             'total_discount' => round((float) $sales->sum('discount_amount'), 2),
             'replacement_extra' => round(
@@ -261,7 +265,7 @@ class DailySalesReportService
         return Sale::query()
             ->with(['product:id,name,unit'])
             ->where('processed_by_user_id', $userId)
-            ->whereBetween('created_at', [$start, $end])
+            ->whereRaw(Sale::recognizedAtSql().' BETWEEN ? AND ?', [$start, $end])
             ->orderBy('id')
             ->get();
     }

@@ -16,9 +16,12 @@ use App\Http\Controllers\Api\ProductSyncController;
 use App\Http\Controllers\Api\SaleController;
 use App\Http\Controllers\Api\SettingsController;
 use App\Http\Controllers\Api\UserController;
+use App\Http\Controllers\Api\UtangController;
 use Illuminate\Support\Facades\Route;
 
 Route::post('/auth/login', [AuthController::class, 'login']);
+Route::post('/flutter/account', [AuthController::class, 'updateAccount'])
+    ->middleware('throttle:8,1');
 
 Route::get('/flutter/products', [ProductController::class, 'index']);
 Route::get('/flutter/selling', [ProductSellingController::class, 'index']);
@@ -36,6 +39,8 @@ Route::get('/flutter/daily-sales-reports', [DailySalesReportController::class, '
 Route::post('/flutter/daily-sales-reports', [DailySalesReportController::class, 'flutterStore']);
 Route::get('/flutter/sales', [SaleController::class, 'historyFromFlutter']);
 Route::post('/flutter/sales', [SaleController::class, 'storeFromFlutter']);
+Route::get('/flutter/utang', [UtangController::class, 'flutterIndex']);
+Route::post('/flutter/utang/pay', [UtangController::class, 'markPaid']);
 
 Route::post('/products', [ProductController::class, 'store']);
 Route::put('/products/{id}', [ProductController::class, 'update']);
@@ -46,6 +51,9 @@ Route::post('/sales', [SaleController::class, 'store']);
 Route::middleware('web')->group(function () {
     Route::get('/dashboard', [DashboardController::class, 'index']);
     Route::get('/sales', [SaleController::class, 'index']);
+    Route::get('/sales/export/{format}', [SaleController::class, 'export']);
+    Route::get('/utang', [UtangController::class, 'index']);
+    Route::post('/utang/pay', [UtangController::class, 'markPaid']);
     Route::get('/daily-sales-reports', [DailySalesReportController::class, 'index']);
     Route::get('/daily-sales-reports/{id}', [DailySalesReportController::class, 'show']);
     Route::get('/daily-sales-reports/{id}/pdf', [DailySalesReportController::class, 'pdf']);

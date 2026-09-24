@@ -35,6 +35,8 @@ const isSaving = ref(false);
 const form = reactive({
     name: "",
     category: "",
+    company_name: "",
+    unitSize: "",
     unit: "pcs",
     price: "",
     description: "",
@@ -72,10 +74,39 @@ const loadProducts = async () => {
 
 const hasDigits = (value) => /\d/.test(value);
 
+const splitUnit = (value) => {
+    const text = String(value || "").trim();
+    const match = text.match(/^(\d+(?:\.\d+)?)\s*(.+)$/);
+
+    if (!match || !match[2].trim()) {
+        return { size: "", unit: text || "pcs" };
+    }
+
+    return { size: match[1], unit: match[2].trim() };
+};
+
+const composedUnit = () => {
+    const unit = String(form.unit || "").trim() || "pcs";
+    const size = String(form.unitSize ?? "").trim();
+
+    if (!size) {
+        return unit;
+    }
+
+    const amount = Number(size);
+    if (!Number.isFinite(amount) || amount <= 0) {
+        return unit;
+    }
+
+    const pretty = Number.isInteger(amount) ? String(amount) : String(amount);
+
+    return `${pretty} ${unit}`;
+};
+
 const unitOptions = computed(() => {
     const units = new Set(
         products.value
-            .map((product) => (product.unit || "").trim())
+            .map((product) => splitUnit(product.unit).unit)
             .filter((unit) => unit && !hasDigits(unit)),
     );
 
@@ -126,7 +157,7 @@ const unitChoices = computed(() => {
     ];
     const units = new Set(
         products.value
-            .map((product) => (product.unit || "").trim())
+            .map((product) => splitUnit(product.unit).unit)
             .filter((unit) => unit && !hasDigits(unit)),
     );
 
@@ -151,6 +182,7 @@ const filteredProducts = computed(() => {
             const haystack = [
                 product.name,
                 product.category,
+                product.company_name,
                 product.unit,
                 product.description,
                 String(product.price ?? ""),
@@ -164,7 +196,13 @@ const filteredProducts = computed(() => {
     }
 
     if (selectedUnit.value !== "all") {
-        list = list.filter((product) => product.unit === selectedUnit.value);
+        list = list.filter((product) => {
+            const kind = splitUnit(product.unit).unit;
+            return (
+                product.unit === selectedUnit.value ||
+                kind === selectedUnit.value
+            );
+        });
     }
 
     switch (sortBy.value) {
@@ -231,6 +269,8 @@ watch(totalPages, (pages) => {
 const resetForm = () => {
     form.name = "";
     form.category = "";
+    form.company_name = "";
+    form.unitSize = "";
     form.unit = "pcs";
     form.price = "";
     form.description = "";
@@ -249,7 +289,10 @@ const openCreate = () => {
 const openEdit = (product) => {
     form.name = product.name;
     form.category = product.category ?? "";
-    form.unit = product.unit ?? "pcs";
+    form.company_name = product.company_name ?? "";
+    const parsedUnit = splitUnit(product.unit ?? "pcs");
+    form.unitSize = parsedUnit.size;
+    form.unit = parsedUnit.unit;
     form.price = product.price;
     form.description = product.description ?? "";
     form.image = null;
@@ -278,7 +321,8 @@ const saveProduct = async () => {
     const payload = new FormData();
     payload.append("name", form.name);
     payload.append("category", form.category ?? "");
-    payload.append("unit", form.unit);
+    payload.append("company_name", form.company_name ?? "");
+    payload.append("unit", composedUnit());
     payload.append("price", String(Number(form.price)));
     payload.append("description", form.description ?? "");
 
@@ -351,7 +395,7 @@ onBeforeUnmount(() => {
                                 v-model="searchQuery"
                                 class="input"
                                 type="text"
-                                placeholder="Search name, category, unit, price, description"
+                                placeholder="Search name, company, category, unit, price, description"
                             />
                         </label>
 
@@ -400,6 +444,7 @@ onBeforeUnmount(() => {
                     :columns="[
                         'Image',
                         'Name',
+                        'Company',
                         'Category',
                         'Unit',
                         'Price',
@@ -409,7 +454,7 @@ onBeforeUnmount(() => {
                     ]"
                 >
                     <tr v-if="filteredProducts.length === 0">
-                        <td class="products-empty" colspan="8">
+                        <td class="products-empty" colspan="9">
                             No products match your current search/filters.
                         </td>
                     </tr>
@@ -425,6 +470,7 @@ onBeforeUnmount(() => {
                             <span v-else>-</span>
                         </td>
                         <td>{{ product.name }}</td>
+                        <td>{{ product.company_name || "-" }}</td>
                         <td>{{ product.category || "-" }}</td>
                         <td>{{ product.unit || "-" }}</td>
                         <td>{{ Number(product.price).toFixed(2) }}</td>
@@ -540,21 +586,41 @@ onBeforeUnmount(() => {
                             placeholder="Product name"
                         />
                         <Input
+                            v-model="form.company_name"
+                            label="Company"
+                            placeholder="Company name"
+                        />
+                        <Input
                             v-model="form.category"
                             label="Category"
                             placeholder="e.g. Seeds, Fertilizer"
                         />
                         <label class="form-field">
                             <span class="form-field__label">Unit</span>
-                            <select v-model="form.unit" class="input">
-                                <option
-                                    v-for="unit in unitChoices"
-                                    :key="unit"
-                                    :value="unit"
+                            <span class="products-unit">
+                                <input
+                                    v-model="form.unitSize"
+                                    class="input products-unit__size"
+                                    type="number"
+                                    min="0"
+                                    step="any"
+                                    placeholder="50"
+                                    aria-label="Unit size"
+                                />
+                                <select
+                                    v-model="form.unit"
+                                    class="input"
+                                    aria-label="Unit"
                                 >
-                                    {{ unit }}
-                                </option>
-                            </select>
+                                    <option
+                                        v-for="unit in unitChoices"
+                                        :key="unit"
+                                        :value="unit"
+                                    >
+                                        {{ unit }}
+                                    </option>
+                                </select>
+                            </span>
                         </label>
                         <Input
                             v-model="form.price"

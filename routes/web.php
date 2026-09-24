@@ -28,6 +28,7 @@ Route::middleware(['auth', 'web.access'])->group(function () {
 	Route::get('/inventories', fn () => Inertia::render('Inventories'));
 	Route::get('/main-inventory', fn () => Inertia::render('MainInventory'));
 	Route::get('/sales-report', fn () => Inertia::render('SalesReport'));
+	Route::get('/utang', fn () => Inertia::render('Utang'));
 	Route::get('/daily-cashier-reports', fn () => Inertia::render('DailyCashierReports'));
 	Route::get('/discount-setup', fn () => InertiaAdminPage::render('DiscountSetup', 'Discount Setup'));
 	Route::get('/product-replacement', fn () => InertiaAdminPage::render('ProductReplacement', 'Product Replacement'));

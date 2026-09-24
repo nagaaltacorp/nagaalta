@@ -22,6 +22,9 @@ class Sale extends Model
         'discount_amount',
         'total_price',
         'payment_method',
+        'borrower_name',
+        'due_date',
+        'paid_at',
         'replaces_sale_id',
         'replaced_by_sale_id',
         'created_at',
@@ -43,6 +46,8 @@ class Sale extends Model
         'discount_percent' => 'decimal:2',
         'discount_amount' => 'decimal:2',
         'total_price' => 'decimal:2',
+        'due_date' => 'date',
+        'paid_at' => 'datetime',
         'processed_by_user_id' => 'integer',
         'replaces_sale_id' => 'integer',
         'replaced_by_sale_id' => 'integer',
@@ -105,6 +110,39 @@ class Sale extends Model
     public function getIsReplacementAttribute(): bool
     {
         return $this->replaces_sale_id !== null;
+    }
+
+    public function scopeCollected($query)
+    {
+        return $query->where(function ($collected) {
+            $collected
+                ->where(function ($notUtang) {
+                    $notUtang
+                        ->whereNull('sales.payment_method')
+                        ->orWhereRaw('LOWER(sales.payment_method) != ?', ['utang']);
+                })
+                ->orWhereNotNull('sales.paid_at');
+        });
+    }
+
+    public function isUnpaidUtang(): bool
+    {
+        return strtolower(trim((string) $this->payment_method)) === 'utang'
+            && $this->paid_at === null;
+    }
+
+    public static function recognizedAtSql(): string
+    {
+        return "CASE WHEN LOWER(sales.payment_method) = 'utang' THEN sales.paid_at ELSE sales.created_at END";
+    }
+
+    public function recognizedAt(): ?Carbon
+    {
+        if (strtolower(trim((string) $this->payment_method)) === 'utang') {
+            return $this->paid_at;
+        }
+
+        return $this->created_at;
     }
 
     public function product(): BelongsTo

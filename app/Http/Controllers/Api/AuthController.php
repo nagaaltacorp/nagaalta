@@ -8,6 +8,7 @@ use App\Models\User;
 use App\Services\UserLoginGuard;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Hash;
+use Illuminate\Validation\ValidationException;
 
 class AuthController extends Controller
 {
@@ -54,6 +55,88 @@ class AuthController extends Controller
             ])->save();
         }
 
+        return response()->json([
+            'message' => 'Login successful.',
+            'data' => $this->accountPayload($user, $request),
+        ]);
+    }
+
+    public function updateAccount(Request $request)
+    {
+        $validated = $request->validate([
+            'user_id' => ['required', 'integer', 'exists:users,id'],
+            'current_password' => ['required', 'string'],
+            'user_name' => ['nullable', 'string', 'min:3', 'max:40', 'regex:/^[A-Za-z0-9._-]+$/'],
+            'username' => ['nullable', 'string', 'min:3', 'max:40', 'regex:/^[A-Za-z0-9._-]+$/'],
+            'password' => ['nullable', 'string', 'min:8', 'max:100', 'confirmed'],
+        ]);
+
+        $user = User::with([
+            'employee.branch:id,name,location',
+            'managedBranch:id,name,location',
+        ])->find($validated['user_id']);
+
+        if (! $user || ! Hash::check($validated['current_password'], $user->password)) {
+            return response()->json([
+                'message' => 'Current password is incorrect.',
+            ], 401);
+        }
+
+        if (isset($user->is_active) && ! $user->is_active) {
+            return response()->json([
+                'message' => 'Your account is inactive. Please contact admin.',
+            ], 403);
+        }
+
+        $username = trim((string) ($validated['user_name'] ?? $validated['username'] ?? ''));
+        $password = (string) ($validated['password'] ?? '');
+        $usernameChanged = $username !== '' && strcasecmp($username, (string) $user->user_name) !== 0;
+        $passwordChanged = $password !== '';
+
+        if (! $usernameChanged && ! $passwordChanged) {
+            throw ValidationException::withMessages([
+                'user_name' => 'Enter a new username or a new password.',
+            ]);
+        }
+
+        if ($usernameChanged) {
+            $taken = User::query()
+                ->where('id', '!=', $user->id)
+                ->whereRaw('LOWER(user_name) = ?', [strtolower($username)])
+                ->exists();
+
+            if ($taken) {
+                throw ValidationException::withMessages([
+                    'user_name' => 'That username is already used.',
+                ]);
+            }
+
+            $user->user_name = $username;
+        }
+
+        if ($passwordChanged) {
+            if (Hash::check($password, $user->password)) {
+                throw ValidationException::withMessages([
+                    'password' => 'New password must be different from the current password.',
+                ]);
+            }
+
+            $user->password = $password;
+        }
+
+        $user->save();
+
+        return response()->json([
+            'message' => 'Account updated. Use the new username and password the next time you sign in.',
+            'data' => $this->accountPayload($user->fresh([
+                'employee.branch:id,name,location',
+                'managedBranch:id,name,location',
+            ]), $request),
+        ]);
+    }
+
+    private function accountPayload(User $user, Request $request): array
+    {
         $profilePath = $user->profile_picture
             ?? $user->employee?->profile_picture
             ?? null;
@@ -62,38 +145,28 @@ class AuthController extends Controller
         $branch = $user->employee?->branch ?? $user->managedBranch;
         $branchPayload = $this->branchPayload($branch);
 
-        return response()->json([
-            'message' => 'Login successful.',
-            'data' => [
-                'id' => $user->id,
-                'user_name' => $user->user_name,
-                'name' => $user->name ?? $user->user_name,
-                'email' => $user->email,
-                'role' => $user->role ?? 'staff',
-                'is_active' => (bool) ($user->is_active ?? true),
-                'is_online' => (bool) ($user->is_online ?? false),
-
-                // Added for Flutter profile image support
-                'profile_picture' => $profilePath,
-                'profile_picture_url' => $this->buildPublicImageUrl($profilePath, $request),
-
-                // Flutter reads branch.id / branch.name / branch.location
-                'branch' => $branchPayload,
-
-                'employee' => $user->employee
-                    ? [
-                        'id' => $user->employee->id,
-                        'branch_id' => $branch?->id ?? $user->employee->branch_id,
-                        'branch_name' => $branch?->name,
-                        'branch' => $branchPayload,
-
-                        // Optional mirror fields
-                        'profile_picture' => $employeeProfilePath,
-                        'profile_picture_url' => $this->buildPublicImageUrl($employeeProfilePath, $request),
-                    ]
-                    : null,
-            ],
-        ]);
+        return [
+            'id' => $user->id,
+            'user_name' => $user->user_name,
+            'name' => $user->name ?? $user->user_name,
+            'email' => $user->email,
+            'role' => $user->role ?? 'staff',
+            'is_active' => (bool) ($user->is_active ?? true),
+            'is_online' => (bool) ($user->is_online ?? false),
+            'profile_picture' => $profilePath,
+            'profile_picture_url' => $this->buildPublicImageUrl($profilePath, $request),
+            'branch' => $branchPayload,
+            'employee' => $user->employee
+                ? [
+                    'id' => $user->employee->id,
+                    'branch_id' => $branch?->id ?? $user->employee->branch_id,
+                    'branch_name' => $branch?->name,
+                    'branch' => $branchPayload,
+                    'profile_picture' => $employeeProfilePath,
+                    'profile_picture_url' => $this->buildPublicImageUrl($employeeProfilePath, $request),
+                ]
+                : null,
+        ];
     }
 
     /**

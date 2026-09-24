@@ -51,8 +51,19 @@ const truncateLabel = (value, maxLength = 18) => {
     return `${label.slice(0, maxLength - 1)}…`;
 };
 
+const isUnpaidUtang = (sale) =>
+    String(sale.payment_method || "").toLowerCase() === "utang" && !sale.paid_at;
+
+const recognizedAtValue = (sale) => {
+    if (String(sale.payment_method || "").toLowerCase() === "utang") {
+        return sale.paid_at || null;
+    }
+
+    return sale.created_at;
+};
+
 const getCreatedAtDate = (sale) => {
-    const date = new Date(sale.created_at);
+    const date = new Date(recognizedAtValue(sale));
 
     return Number.isNaN(date.getTime()) ? null : date;
 };
@@ -130,6 +141,10 @@ const dateFilteredSales = computed(() => {
         : null;
 
     return sales.value.filter((sale) => {
+        if (isUnpaidUtang(sale)) {
+            return false;
+        }
+
         const createdAt = getCreatedAtDate(sale);
 
         if (fromDate && (!createdAt || createdAt < fromDate)) {
@@ -345,7 +360,7 @@ const trendData = computed(() => {
     const byDate = new Map();
 
     searchedSales.value.forEach((sale) => {
-        const dateKey = formatDateKey(sale.created_at);
+        const dateKey = formatDateKey(recognizedAtValue(sale));
 
         if (!dateKey) {
             return;

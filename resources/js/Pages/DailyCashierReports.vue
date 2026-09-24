@@ -1,7 +1,7 @@
 <script setup>
 import { Head } from "@inertiajs/vue3";
 import { Download, Eye } from "lucide-vue-next";
-import { onMounted, ref } from "vue";
+import { computed, onMounted, ref } from "vue";
 import { toast } from "vue-sonner";
 import AppLayout from "../components/layout/AppLayout.vue";
 import Button from "../components/ui/Button.vue";
@@ -16,6 +16,7 @@ const branchFilter = ref("all");
 const dateFilter = ref("");
 const showView = ref(false);
 const viewing = ref(null);
+const viewItemQuery = ref("");
 const downloadingId = ref(null);
 
 const formatMoney = (value) =>
@@ -75,7 +76,25 @@ const loadReports = async () => {
     branches.value = branchPayload.data ?? [];
 };
 
+const filteredViewItems = computed(() => {
+    const items = viewing.value?.items ?? [];
+    const keyword = viewItemQuery.value.trim().toLowerCase();
+
+    if (!keyword) {
+        return items;
+    }
+
+    return items.filter((item) =>
+        [item.name, item.unit, item.is_replacement ? "replacement" : ""]
+            .filter(Boolean)
+            .join(" ")
+            .toLowerCase()
+            .includes(keyword),
+    );
+});
+
 const openView = async (report) => {
+    viewItemQuery.value = "";
     const { data } = await api.get(`/daily-sales-reports/${report.id}`);
     viewing.value = data.data;
     showView.value = true;
@@ -84,6 +103,7 @@ const openView = async (report) => {
 const closeView = () => {
     showView.value = false;
     viewing.value = null;
+    viewItemQuery.value = "";
 };
 
 const downloadPdf = async (report) => {
@@ -376,6 +396,13 @@ onMounted(loadReports);
 
                     <section class="daily-report-view__section">
                         <h4>Products</h4>
+                        <label class="daily-report-view__search">
+                            <input
+                                v-model="viewItemQuery"
+                                type="search"
+                                placeholder="Search product or unit"
+                            />
+                        </label>
                         <div class="daily-report-view__table-wrap">
                             <table class="daily-report-view__table">
                                 <thead>
@@ -387,16 +414,17 @@ onMounted(loadReports);
                                     </tr>
                                 </thead>
                                 <tbody>
-                                    <tr
-                                        v-if="
-                                            !viewing.items ||
-                                            viewing.items.length === 0
-                                        "
-                                    >
-                                        <td colspan="4">No products</td>
+                                    <tr v-if="filteredViewItems.length === 0">
+                                        <td colspan="4">
+                                            {{
+                                                viewing.items?.length
+                                                    ? "No products match this search."
+                                                    : "No products"
+                                            }}
+                                        </td>
                                     </tr>
                                     <tr
-                                        v-for="(item, index) in viewing.items"
+                                        v-for="(item, index) in filteredViewItems"
                                         :key="index"
                                     >
                                         <td>

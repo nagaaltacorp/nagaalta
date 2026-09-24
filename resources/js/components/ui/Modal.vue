@@ -12,6 +12,10 @@ defineProps({
         type: Boolean,
         default: false,
     },
+    landscape: {
+        type: Boolean,
+        default: false,
+    },
 });
 
 const emit = defineEmits(["close"]);
@@ -26,7 +30,13 @@ const emit = defineEmits(["close"]);
         >
             <div
                 class="flex max-h-[min(88vh,860px)] min-h-0 w-full flex-col border-2 border-green-900 bg-white shadow-xl"
-                :class="wide ? 'max-w-[760px]' : 'max-w-[560px]'"
+                :class="
+                    landscape
+                        ? 'max-w-[1040px]'
+                        : wide
+                          ? 'max-w-[760px]'
+                          : 'max-w-[560px]'
+                "
             >
                 <header
                     class="flex shrink-0 items-center justify-between bg-green-900 px-4 py-3.5"

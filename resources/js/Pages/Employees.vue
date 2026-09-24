@@ -32,6 +32,7 @@ const branches = ref([]);
 const showModal = ref(false);
 const showDeleteModal = ref(false);
 const editingId = ref(null);
+const savedUsername = ref("");
 const pendingDeleteEmployee = ref(null);
 const searchQuery = ref("");
 const photoFilter = ref("all");
@@ -148,6 +149,23 @@ const paginationTo = computed(() =>
     Math.min(currentPage.value * pageSize, filteredEmployees.value.length),
 );
 
+const previewUsername = computed(() => {
+    if (editingId.value) {
+        return savedUsername.value || "-";
+    }
+
+    return [form.first_name, form.last_name]
+        .map((part) =>
+            String(part || "")
+                .trim()
+                .toLowerCase()
+                .replace(/@.*/g, "")
+                .replace(/[^a-z0-9]+/g, ""),
+        )
+        .filter(Boolean)
+        .join(".");
+});
+
 const pageNumbers = computed(() => {
     const pages = [];
 
@@ -188,6 +206,7 @@ const resetForm = () => {
     form.address = "";
     form.profile_picture = null;
     editingId.value = null;
+    savedUsername.value = "";
     clearProfilePreview();
 };
 
@@ -205,6 +224,7 @@ const openEdit = (employee) => {
     form.contact_email = employee.contact_email ?? "";
     form.address = employee.address ?? "";
     form.profile_picture = null;
+    savedUsername.value = employee.user?.user_name || "";
     editingId.value = employee.id;
     showModal.value = true;
 };
@@ -272,7 +292,9 @@ const saveEmployee = async () => {
         }
 
         toast.success(
-            response?.data?.message || "Employee created successfully.",
+            response?.data?.username
+                ? `Employee created. Username ${response.data.username} was saved from the first and last name.`
+                : response?.data?.message || "Employee created successfully.",
         );
     } catch (error) {
         toast.error(
@@ -490,80 +512,102 @@ onMounted(async () => {
             <Modal
                 :open="showModal"
                 :title="editingId ? 'Edit Employee' : 'Create Employee'"
-                class="employees-modal"
+                landscape
                 @close="showModal = false"
             >
-                <form
-                    class="form-grid employees-form"
-                    @submit.prevent="saveEmployee"
-                >
-                    <div class="products-modal-head">
-                        <User class="products-modal-head-icon" />
-                        <p class="products-modal-head-text">
-                            {{
-                                editingId
-                                    ? "Update employee details and save changes."
-                                    : "Add a new employee to your team roster."
-                            }}
-                        </p>
+                <form class="employee-landscape" @submit.prevent="saveEmployee">
+                    <p class="employee-landscape__intro">
+                        {{
+                            editingId
+                                ? "Update employee details and save changes."
+                                : "Add a new employee to your team roster."
+                        }}
+                    </p>
+
+                    <div class="employee-landscape__body">
+                        <div class="employee-landscape__fields">
+                            <label class="form-field employee-landscape__span">
+                                <span class="form-field__label">Branch</span>
+                                <select
+                                    v-model="form.branch_id"
+                                    class="input"
+                                    required
+                                >
+                                    <option value="">Select branch</option>
+                                    <option
+                                        v-for="branch in branchOptions"
+                                        :key="branch.id"
+                                        :value="String(branch.id)"
+                                    >
+                                        {{ branch.name }} -
+                                        {{ branch.location }}
+                                    </option>
+                                </select>
+                            </label>
+
+                            <Input
+                                v-model="form.first_name"
+                                label="First Name"
+                            />
+                            <Input v-model="form.last_name" label="Last Name" />
+
+                            <label class="form-field employee-landscape__span">
+                                <span class="form-field__label">Username</span>
+                                <input
+                                    class="input"
+                                    type="text"
+                                    :value="previewUsername"
+                                    readonly
+                                    placeholder="Filled from first and last name"
+                                />
+                            </label>
+
+                            <Input
+                                v-model="form.contact_number"
+                                type="text"
+                                label="Contact Number"
+                            />
+                            <Input
+                                v-model="form.contact_email"
+                                type="email"
+                                label="Contact Email"
+                            />
+                            <Input
+                                v-model="form.address"
+                                label="Address"
+                                class="employee-landscape__span"
+                            />
+                        </div>
+
+                        <aside class="employee-landscape__photo">
+                            <span class="form-field__label">Profile Picture</span>
+                            <div class="employee-landscape__frame">
+                                <img
+                                    v-if="profilePreviewUrl"
+                                    :src="profilePreviewUrl"
+                                    alt="Profile preview"
+                                />
+                                <User v-else />
+                            </div>
+                            <label class="employee-landscape__file">
+                                <input
+                                    type="file"
+                                    accept="image/*"
+                                    @change="onProfilePictureChange"
+                                />
+                                <span>Choose photo</span>
+                            </label>
+                            <p class="employee-landscape__note">
+                                {{
+                                    editingId
+                                        ? "Leave the photo empty to keep the current picture."
+                                        : "Username is saved from the first and last name. The email is not used."
+                                }}
+                            </p>
+                        </aside>
                     </div>
 
-                    <label class="form-field employees-form__full">
-                        <span class="form-field__label">Branch</span>
-                        <select v-model="form.branch_id" class="input" required>
-                            <option value="">Select branch</option>
-                            <option
-                                v-for="branch in branchOptions"
-                                :key="branch.id"
-                                :value="String(branch.id)"
-                            >
-                                {{ branch.name }} - {{ branch.location }}
-                            </option>
-                        </select>
-                    </label>
-
-                    <Input v-model="form.first_name" label="First Name" />
-                    <Input v-model="form.last_name" label="Last Name" />
-                    <Input
-                        v-model="form.contact_number"
-                        type="text"
-                        label="Contact Number"
-                    />
-                    <Input
-                        v-model="form.contact_email"
-                        type="email"
-                        label="Contact Email"
-                    />
-                    <Input
-                        v-model="form.address"
-                        label="Address"
-                        class="employees-form__full"
-                    />
-                    <label class="form-field employees-form__full">
-                        <span class="form-field__label">Profile Picture</span>
-                        <div class="users-upload">
-                            <input
-                                class="input users-upload__input"
-                                type="file"
-                                accept="image/*"
-                                @change="onProfilePictureChange"
-                            />
-                        </div>
-                        <div
-                            v-if="profilePreviewUrl"
-                            class="users-upload-preview"
-                        >
-                            <img
-                                :src="profilePreviewUrl"
-                                alt="Profile preview"
-                                class="users-upload-preview__image"
-                            />
-                        </div>
-                    </label>
-                    <p v-if="editingId" class="form-hint">
-                        Leave image empty to keep the current profile picture.
-                    </p>
-                    <div class="form-actions">
+                    <div class="employee-landscape__actions">
                         <Button type="submit" :disabled="isSaving">
                             {{ isSaving ? "Saving..." : "Save" }}
                         </Button>

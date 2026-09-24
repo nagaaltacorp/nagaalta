@@ -1,6 +1,6 @@
 <script setup>
 import { Head } from "@inertiajs/vue3";
-import { ArrowRight, RefreshCw, Search } from "lucide-vue-next";
+import { ArrowRight, Filter, RefreshCw, Search } from "lucide-vue-next";
 import { computed, onMounted, ref } from "vue";
 import { toast } from "vue-sonner";
 import AppLayout from "../components/layout/AppLayout.vue";
@@ -12,6 +12,8 @@ const windowDays = ref(7);
 const savedDays = ref(7);
 const replacements = ref([]);
 const searchQuery = ref("");
+const typeFilter = ref("all");
+const paymentFilter = ref("all");
 const isSaving = ref(false);
 const saveError = ref("");
 const saveMessage = ref("");
@@ -30,11 +32,30 @@ const extraPaidCount = computed(
 const filteredReplacements = computed(() => {
     const keyword = searchQuery.value.trim().toLowerCase();
 
-    if (!keyword) {
-        return replacements.value;
-    }
-
     return replacements.value.filter((item) => {
+        const sameProduct = isSameProduct(item);
+        const extra = Number(item.additional_payment || 0) > 0;
+
+        if (typeFilter.value === "same" && !sameProduct) {
+            return false;
+        }
+
+        if (typeFilter.value === "different" && sameProduct) {
+            return false;
+        }
+
+        if (paymentFilter.value === "extra" && !extra) {
+            return false;
+        }
+
+        if (paymentFilter.value === "none" && extra) {
+            return false;
+        }
+
+        if (!keyword) {
+            return true;
+        }
+
         const haystack = [
             item.sale_number,
             item.replacement_number,
@@ -262,20 +283,36 @@ onMounted(loadData);
                             new product costs more.
                         </p>
                     </div>
+                </div>
 
-                    <label
-                        class="relative min-w-[16rem] flex-1 sm:max-w-xs sm:flex-none"
-                    >
-                        <Search
-                            class="pointer-events-none absolute top-1/2 left-2.5 h-4 w-4 -translate-y-1/2 text-slate-400"
-                        />
-                        <input
-                            v-model="searchQuery"
-                            class="input pl-9"
-                            type="search"
-                            placeholder="Search receipt, product, cashier"
-                        />
-                    </label>
+                <div class="products-toolbar">
+                    <div class="products-controls">
+                        <label class="products-control products-control--search">
+                            <Search class="products-control-icon" />
+                            <input
+                                v-model="searchQuery"
+                                class="input"
+                                type="search"
+                                placeholder="Search receipt, product, cashier"
+                            />
+                        </label>
+                        <label class="products-control">
+                            <Filter class="products-control-icon" />
+                            <select v-model="typeFilter" class="input">
+                                <option value="all">All types</option>
+                                <option value="same">Same product</option>
+                                <option value="different">Different product</option>
+                            </select>
+                        </label>
+                        <label class="products-control">
+                            <Filter class="products-control-icon" />
+                            <select v-model="paymentFilter" class="input">
+                                <option value="all">All payments</option>
+                                <option value="extra">Extra paid</option>
+                                <option value="none">No extra payment</option>
+                            </select>
+                        </label>
+                    </div>
                 </div>
 
                 <Table

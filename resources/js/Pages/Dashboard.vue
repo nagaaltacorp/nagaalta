@@ -60,7 +60,29 @@ const topSellingPieLabels = computed(
 const topSellingPieTotal = computed(() =>
     Number(stats.top_selling_products_pie?.total_quantity ?? 0),
 );
+const latestSalesQuery = ref("");
 const latestSales = computed(() => stats.latest_sales ?? []);
+const filteredLatestSales = computed(() => {
+    const keyword = latestSalesQuery.value.trim().toLowerCase();
+
+    if (!keyword) {
+        return latestSales.value;
+    }
+
+    return latestSales.value.filter((sale) =>
+        [
+            sale.sale_number,
+            sale.product_name,
+            sale.processed_by,
+            sale.quantity_display,
+            sale.quantity,
+        ]
+            .filter((value) => value !== null && value !== undefined && value !== "")
+            .join(" ")
+            .toLowerCase()
+            .includes(keyword),
+    );
+});
 
 const formatCount = (value) => Number(value || 0).toLocaleString();
 
@@ -771,12 +793,24 @@ onUnmounted(() => {
         <div class="dashboard-bottom-grid">
             <section class="dashboard-latest-sales dashboard-surface-card">
                     <div class="dashboard-latest-sales__head">
-                        <h3 class="dashboard-latest-sales__title">
-                            Latest sales
-                        </h3>
-                        <p class="dashboard-latest-sales__subtitle">
-                            Showing the 5 most recent transactions
-                        </p>
+                        <div>
+                            <h3 class="dashboard-latest-sales__title">
+                                Latest sales
+                            </h3>
+                            <p class="dashboard-latest-sales__subtitle">
+                                Showing the 5 most recent transactions
+                            </p>
+                        </div>
+                        <label
+                            v-if="!isLoadingChart && latestSales.length"
+                            class="dashboard-latest-sales__search"
+                        >
+                            <input
+                                v-model="latestSalesQuery"
+                                type="search"
+                                placeholder="Search sale, product, cashier"
+                            />
+                        </label>
                     </div>
 
                     <div class="dashboard-latest-sales__body">
@@ -792,6 +826,13 @@ onUnmounted(() => {
                             class="dashboard-chart-card__state"
                         >
                             No sales found yet.
+                        </p>
+
+                        <p
+                            v-else-if="!filteredLatestSales.length"
+                            class="dashboard-chart-card__state"
+                        >
+                            No sales match this search.
                         </p>
 
                         <div
@@ -811,7 +852,7 @@ onUnmounted(() => {
                                 </thead>
                                 <tbody>
                                     <tr
-                                        v-for="sale in latestSales"
+                                        v-for="sale in filteredLatestSales"
                                         :key="sale.id"
                                     >
                                         <td

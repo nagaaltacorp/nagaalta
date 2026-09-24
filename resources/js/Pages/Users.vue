@@ -1,7 +1,7 @@
 <script setup>
 import { Head } from "@inertiajs/vue3";
-import { UserPlus } from "lucide-vue-next";
-import { onBeforeUnmount, onMounted, reactive, ref } from "vue";
+import { UserPlus, Search, Filter } from "lucide-vue-next";
+import { computed, onBeforeUnmount, onMounted, reactive, ref } from "vue";
 import AppLayout from "../components/layout/AppLayout.vue";
 import Button from "../components/ui/Button.vue";
 import Input from "../components/ui/Input.vue";
@@ -10,6 +10,9 @@ import Table from "../components/ui/Table.vue";
 import api from "../services/api";
 
 const users = ref([]);
+const searchQuery = ref("");
+const roleFilter = ref("all");
+const statusFilter = ref("all");
 const showModal = ref(false);
 const isSaving = ref(false);
 const profilePreviewUrl = ref("");
@@ -43,6 +46,34 @@ const loadUsers = async () => {
     const { data } = await api.get("/users");
     users.value = data.data;
 };
+
+const filteredUsers = computed(() => {
+    const keyword = searchQuery.value.trim().toLowerCase();
+
+    return users.value.filter((user) => {
+        if (roleFilter.value !== "all" && user.role !== roleFilter.value) {
+            return false;
+        }
+
+        if (statusFilter.value === "active" && !user.is_active) {
+            return false;
+        }
+
+        if (statusFilter.value === "inactive" && user.is_active) {
+            return false;
+        }
+
+        if (!keyword) {
+            return true;
+        }
+
+        return [user.name, user.email, user.role]
+            .filter(Boolean)
+            .join(" ")
+            .toLowerCase()
+            .includes(keyword);
+    });
+});
 
 const saveUser = async () => {
     if (isSaving.value) {
@@ -89,14 +120,49 @@ onMounted(loadUsers);
         <div class="users-page">
             <section class="dashboard-surface-card">
             <h2 class="panel-title">Users</h2>
-            <div class="toolbar">
-                    <Button @click="showModal = true">Add User</Button>
+            <div class="products-toolbar">
+                <div class="products-controls">
+                    <label class="products-control products-control--search">
+                        <Search class="products-control-icon" />
+                        <input
+                            v-model="searchQuery"
+                            class="input"
+                            type="search"
+                            placeholder="Search name, email, or role"
+                        />
+                    </label>
+                    <label class="products-control">
+                        <Filter class="products-control-icon" />
+                        <select v-model="roleFilter" class="input">
+                            <option value="all">All roles</option>
+                            <option value="admin">Admin</option>
+                            <option value="manager">Manager</option>
+                            <option value="staff">Staff</option>
+                        </select>
+                    </label>
+                    <label class="products-control">
+                        <Filter class="products-control-icon" />
+                        <select v-model="statusFilter" class="input">
+                            <option value="all">All statuses</option>
+                            <option value="active">Active</option>
+                            <option value="inactive">Inactive</option>
+                        </select>
+                    </label>
                 </div>
+                <Button class="products-add-btn" @click="showModal = true">
+                    Add User
+                </Button>
+            </div>
 
                 <Table
                     :columns="['Profile', 'Name', 'Email', 'Role', 'Status']"
                 >
-                    <tr v-for="user in users" :key="user.id">
+                    <tr v-if="filteredUsers.length === 0">
+                        <td class="products-empty" colspan="5">
+                            No users match this search.
+                        </td>
+                    </tr>
+                    <tr v-for="user in filteredUsers" :key="user.id">
                         <td>
                             <img
                                 v-if="user.profile_picture"

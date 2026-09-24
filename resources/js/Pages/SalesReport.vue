@@ -1,6 +1,8 @@
 <script setup>
 import { Head } from "@inertiajs/vue3";
+import { Download } from "lucide-vue-next";
 import { computed, onMounted, onUnmounted, ref } from "vue";
+import { toast } from "vue-sonner";
 import AppLayout from "../components/layout/AppLayout.vue";
 import Table from "../components/ui/Table.vue";
 import api from "../services/api";
@@ -11,6 +13,8 @@ const sales = ref([]);
 const searchQuery = ref("");
 const dateFrom = ref("");
 const dateTo = ref("");
+const paymentFilter = ref("all");
+const exporting = ref("");
 let pollTimerId = null;
 let isRefreshing = false;
 
@@ -32,8 +36,19 @@ const getUnitTypeLabel = (sale) => {
     return productUnit || "-";
 };
 
+const isUnpaidUtang = (sale) =>
+    String(sale.payment_method || "").toLowerCase() === "utang" && !sale.paid_at;
+
+const recognizedAtValue = (sale) => {
+    if (String(sale.payment_method || "").toLowerCase() === "utang") {
+        return sale.paid_at || null;
+    }
+
+    return sale.created_at;
+};
+
 const getCreatedAtDate = (sale) => {
-    const date = new Date(sale.created_at);
+    const date = new Date(recognizedAtValue(sale));
 
     return Number.isNaN(date.getTime()) ? null : date;
 };
@@ -50,11 +65,25 @@ const filteredSales = computed(() => {
     return sales.value.filter((sale) => {
         const createdAt = getCreatedAtDate(sale);
 
+        if (isUnpaidUtang(sale)) {
+            return false;
+        }
+
         if (fromDate && (!createdAt || createdAt < fromDate)) {
             return false;
         }
 
         if (toDate && (!createdAt || createdAt > toDate)) {
+            return false;
+        }
+
+        const payment = String(sale.payment_method || "cash").toLowerCase();
+
+        if (paymentFilter.value === "utang" && payment !== "utang") {
+            return false;
+        }
+
+        if (paymentFilter.value === "cash" && payment === "utang") {
             return false;
         }
 
@@ -88,10 +117,54 @@ const total = computed(() =>
     ),
 );
 
+const exportReport = async (format) => {
+    if (exporting.value) {
+        return;
+    }
+
+    exporting.value = format;
+
+    try {
+        const { data } = await api.get(`/sales/export/${format}`, {
+            params: {
+                search: searchQuery.value,
+                from: dateFrom.value,
+                to: dateTo.value,
+                payment: paymentFilter.value,
+            },
+            responseType: "blob",
+        });
+        const type =
+            format === "pdf"
+                ? "application/pdf"
+                : "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+        const url = window.URL.createObjectURL(new Blob([data], { type }));
+        const link = document.createElement("a");
+        const stamp = new Date().toISOString().slice(0, 10);
+        link.href = url;
+        link.download =
+            format === "pdf"
+                ? `sales-report-${stamp}.pdf`
+                : `sales-report-${stamp}.xlsx`;
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+        window.URL.revokeObjectURL(url);
+    } catch (error) {
+        toast.error(
+            error?.response?.data?.message ||
+                "Unable to export this sales report.",
+        );
+    } finally {
+        exporting.value = "";
+    }
+};
+
 const resetFilters = () => {
     searchQuery.value = "";
     dateFrom.value = "";
     dateTo.value = "";
+    paymentFilter.value = "all";
 };
 
 const loadSales = async () => {
@@ -180,12 +253,43 @@ onUnmounted(() => {
                             <span class="sales-report-filter__label">To</span>
                             <input v-model="dateTo" type="date" class="input" />
                         </label>
+
+                        <label class="sales-report-filter">
+                            <span class="sales-report-filter__label">Payment</span>
+                            <select v-model="paymentFilter" class="input">
+                                <option value="all">All payments</option>
+                                <option value="cash">Cash and other</option>
+                                <option value="utang">Utang paid</option>
+                            </select>
+                        </label>
                     </div>
 
                     <div class="sales-report-filters__actions">
                         <p class="sales-report-meta">
                             Showing {{ filteredSales.length }} result(s)
                         </p>
+                        <button
+                            type="button"
+                            class="btn btn--secondary"
+                            :disabled="exporting !== ''"
+                            @click="exportReport('pdf')"
+                        >
+                            <Download class="sales-report-export-icon" />
+                            {{ exporting === "pdf" ? "Exporting..." : "PDF" }}
+                        </button>
+                        <button
+                            type="button"
+                            class="btn btn--secondary"
+                            :disabled="exporting !== ''"
+                            @click="exportReport('excel')"
+                        >
+                            <Download class="sales-report-export-icon" />
+                            {{
+                                exporting === "excel"
+                                    ? "Exporting..."
+                                    : "Excel"
+                            }}
+                        </button>
                         <button
                             type="button"
                             class="btn btn--secondary"
@@ -220,6 +324,12 @@ onUnmounted(() => {
                         <td>
                             {{ sale.product?.name || "-" }}
                             <span
+                                v-if="sale.payment_method === 'utang'"
+                                class="sales-report-flag"
+                            >
+                                {{ sale.paid_at ? "Utang paid" : "Utang" }}
+                            </span>
+                            <span
                                 v-if="sale.is_replacement"
                                 class="sales-report-flag"
                             >
@@ -251,7 +361,7 @@ onUnmounted(() => {
                         <td>{{ Number(sale.total_price).toFixed(2) }}</td>
                         <td>{{ getProcessedBy(sale) }}</td>
                         <td>
-                            {{ new Date(sale.created_at).toLocaleString() }}
+                            {{ new Date(recognizedAtValue(sale)).toLocaleString() }}
                         </td>
                     </tr>
                 </Table>

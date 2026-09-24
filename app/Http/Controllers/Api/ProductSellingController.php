@@ -113,6 +113,7 @@ class ProductSellingController extends Controller
             'id' => $product->id,
             'name' => $product->name,
             'category' => $product->category,
+            'company_name' => $product->company_name,
             'image' => $product->image,
             'description' => $product->description,
             'is_vatable' => (bool) $product->is_vatable,
@@ -135,7 +136,7 @@ class ProductSellingController extends Controller
 
         $unit = $isRetail
             ? ($product->retail_unit ?: 'kg')
-            : ($product->unit ?: 'pcs');
+            : $product->unit_label;
         $price = $isRetail
             ? (float) $product->retail_price
             : (float) $product->price;
@@ -143,23 +144,30 @@ class ProductSellingController extends Controller
         $available = $isRetail
             ? $stock['available_retail_quantity']
             : $stock['wholesale_quantity'];
+        $name = $product->name;
+        if (!$isRetail && $product->unit_size !== null && !str_contains(strtolower($name), strtolower($product->unit_label))) {
+            $name .= ' ('.$product->unit_label.')';
+        }
 
         return [
             'id' => $product->id,
             'product_id' => $product->id,
-            'name' => $product->name,
+            'name' => $name,
             'category' => $product->category,
+            'company_name' => $product->company_name,
             'image' => $product->image,
             'description' => $product->description,
             'mode' => $mode,
             'unit' => $unit,
             'unit_type' => $unit,
+            'unit_size' => $isRetail ? null : $product->unit_size,
+            'unit_label' => $unit,
             'price' => round($price, 2),
             'vat_rate' => (float) $product->resolveVatRate(),
             'vat_amount' => $vatAmount,
             'price_with_vat' => round($price + $vatAmount, 2),
             'available_quantity' => $available,
-            'wholesale_unit' => $product->unit ?: 'pcs',
+            'wholesale_unit' => $product->unit_label,
             'wholesale_quantity' => $stock['wholesale_quantity'],
             'retail_unit' => $product->retail_unit ?: 'kg',
             'retail_qty_per_unit' => $product->usesRetailConversion()

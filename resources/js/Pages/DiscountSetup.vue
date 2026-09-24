@@ -1,6 +1,6 @@
 <script setup>
 import { Head } from "@inertiajs/vue3";
-import { KeyRound, Plus, Trash2, TriangleAlert } from "lucide-vue-next";
+import { KeyRound, Plus, Search, Trash2, TriangleAlert } from "lucide-vue-next";
 import { computed, onMounted, reactive, ref } from "vue";
 import { toast } from "vue-sonner";
 import AppLayout from "../components/layout/AppLayout.vue";
@@ -13,6 +13,8 @@ import api from "../services/api";
 const quickPercents = [5, 10, 15, 20, 25, 50];
 const passwordConfigured = ref(false);
 const options = ref([]);
+const searchQuery = ref("");
+const statusFilter = ref("all");
 const newPercent = ref("");
 const isSavingPassword = ref(false);
 const isSavingOption = ref(false);
@@ -44,6 +46,26 @@ const existingPercents = computed(
 const activeCount = computed(
     () => options.value.filter((option) => option.is_active).length,
 );
+
+const filteredOptions = computed(() => {
+    const keyword = searchQuery.value.trim().toLowerCase();
+
+    return options.value.filter((option) => {
+        if (statusFilter.value === "active" && !option.is_active) {
+            return false;
+        }
+
+        if (statusFilter.value === "hidden" && option.is_active) {
+            return false;
+        }
+
+        if (!keyword) {
+            return true;
+        }
+
+        return formatPercent(option.percent).toLowerCase().includes(keyword);
+    });
+});
 
 const loadData = async () => {
     const { data } = await api.get("/discount-setup");
@@ -305,16 +327,36 @@ onMounted(loadData);
                         </button>
                     </div>
 
+                    <div class="products-toolbar">
+                        <div class="products-controls">
+                            <label class="products-control products-control--search">
+                                <Search class="products-control-icon" />
+                                <input
+                                    v-model="searchQuery"
+                                    class="input"
+                                    type="search"
+                                    placeholder="Search percent"
+                                />
+                            </label>
+                            <label class="products-control">
+                                <select v-model="statusFilter" class="input">
+                                    <option value="all">All percents</option>
+                                    <option value="active">Cashiers can use</option>
+                                    <option value="hidden">Hidden</option>
+                                </select>
+                            </label>
+                        </div>
+                    </div>
+
                     <Table
                         :columns="['Percent', 'Cashiers can use', 'Actions']"
                     >
-                        <tr v-if="options.length === 0">
+                        <tr v-if="filteredOptions.length === 0">
                             <td class="products-empty" colspan="3">
-                                No percents yet. Add 10% or another amount
-                                cashiers may offer.
+                                No percents match this filter.
                             </td>
                         </tr>
-                        <tr v-for="option in options" :key="option.id">
+                        <tr v-for="option in filteredOptions" :key="option.id">
                             <td>
                                 <strong class="discount-setup__percent">
                                     {{ formatPercent(option.percent) }}
