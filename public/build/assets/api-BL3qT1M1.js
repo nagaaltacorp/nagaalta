@@ -1,0 +1,1 @@
+import{N as e}from"./app-4BV510xJ.js";const t=e.create({baseURL:"/api",withCredentials:!0,xsrfCookieName:"XSRF-TOKEN",xsrfHeaderName:"X-XSRF-TOKEN",headers:{"X-Requested-With":"XMLHttpRequest",Accept:"application/json"}});export{t as a};

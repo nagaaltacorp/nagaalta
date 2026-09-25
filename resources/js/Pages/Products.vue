@@ -12,7 +12,15 @@ import {
     TriangleAlert,
     Trash2,
 } from "lucide-vue-next";
-import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from "vue";
+import {
+    computed,
+    nextTick,
+    onBeforeUnmount,
+    onMounted,
+    reactive,
+    ref,
+    watch,
+} from "vue";
 import AppLayout from "../components/layout/AppLayout.vue";
 import Button from "../components/ui/Button.vue";
 import Input from "../components/ui/Input.vue";
@@ -25,6 +33,9 @@ const showModal = ref(false);
 const showDeleteModal = ref(false);
 const editingId = ref(null);
 const pendingDeleteProduct = ref(null);
+const pendingDeleteIds = ref([]);
+const selectedIds = ref([]);
+const selectAllCheckbox = ref(null);
 const searchQuery = ref("");
 const selectedUnit = ref("all");
 const sortBy = ref("name_asc");
@@ -256,6 +267,49 @@ const goToPage = (page) => {
     currentPage.value = Math.min(Math.max(page, 1), totalPages.value);
 };
 
+const selectedCount = computed(() => selectedIds.value.length);
+
+const allFilteredSelected = computed(
+    () =>
+        filteredProducts.value.length > 0 &&
+        filteredProducts.value.every((product) =>
+            selectedIds.value.includes(product.id),
+        ),
+);
+
+const someFilteredSelected = computed(
+    () =>
+        !allFilteredSelected.value &&
+        filteredProducts.value.some((product) =>
+            selectedIds.value.includes(product.id),
+        ),
+);
+
+const toggleSelect = (productId) => {
+    if (selectedIds.value.includes(productId)) {
+        selectedIds.value = selectedIds.value.filter((id) => id !== productId);
+        return;
+    }
+
+    selectedIds.value = [...selectedIds.value, productId];
+};
+
+const toggleSelectAllFiltered = () => {
+    if (allFilteredSelected.value) {
+        const filteredIds = new Set(
+            filteredProducts.value.map((product) => product.id),
+        );
+        selectedIds.value = selectedIds.value.filter(
+            (id) => !filteredIds.has(id),
+        );
+        return;
+    }
+
+    const merged = new Set(selectedIds.value);
+    filteredProducts.value.forEach((product) => merged.add(product.id));
+    selectedIds.value = Array.from(merged);
+};
+
 watch([searchQuery, selectedUnit, sortBy], () => {
     currentPage.value = 1;
 });
@@ -263,6 +317,14 @@ watch([searchQuery, selectedUnit, sortBy], () => {
 watch(totalPages, (pages) => {
     if (currentPage.value > pages) {
         currentPage.value = pages;
+    }
+});
+
+watch([allFilteredSelected, someFilteredSelected], async () => {
+    await nextTick();
+
+    if (selectAllCheckbox.value) {
+        selectAllCheckbox.value.indeterminate = someFilteredSelected.value;
     }
 });
 
@@ -346,28 +408,46 @@ const saveProduct = async () => {
     }
 };
 
-const deleteProduct = async (id) => {
-    await api.delete(`/products/${id}`);
-    await loadProducts();
+const requestDelete = (product) => {
+    pendingDeleteIds.value = [];
+    pendingDeleteProduct.value = product;
+    showDeleteModal.value = true;
 };
 
-const requestDelete = (product) => {
-    pendingDeleteProduct.value = product;
+const requestDeleteSelected = () => {
+    if (selectedIds.value.length === 0) {
+        return;
+    }
+
+    pendingDeleteProduct.value = null;
+    pendingDeleteIds.value = [...selectedIds.value];
     showDeleteModal.value = true;
 };
 
 const closeDeleteModal = () => {
     showDeleteModal.value = false;
     pendingDeleteProduct.value = null;
+    pendingDeleteIds.value = [];
 };
 
 const confirmDelete = async () => {
-    if (!pendingDeleteProduct.value?.id) {
+    const ids = pendingDeleteIds.value.length
+        ? [...pendingDeleteIds.value]
+        : pendingDeleteProduct.value?.id
+          ? [pendingDeleteProduct.value.id]
+          : [];
+
+    if (ids.length === 0) {
         closeDeleteModal();
         return;
     }
 
-    await deleteProduct(pendingDeleteProduct.value.id);
+    for (const id of ids) {
+        await api.delete(`/products/${id}`);
+    }
+
+    selectedIds.value = selectedIds.value.filter((id) => !ids.includes(id));
+    await loadProducts();
     closeDeleteModal();
 };
 
@@ -430,6 +510,24 @@ onBeforeUnmount(() => {
                         </label>
                     </div>
 
+                    <label class="vat-select-all">
+                        <input
+                            ref="selectAllCheckbox"
+                            class="vat-checkbox"
+                            type="checkbox"
+                            :checked="allFilteredSelected"
+                            :disabled="filteredProducts.length === 0"
+                            @change="toggleSelectAllFiltered"
+                        />
+                        Select all
+                    </label>
+                    <Button
+                        v-if="selectedCount > 0"
+                        variant="danger"
+                        @click="requestDeleteSelected"
+                    >
+                        Delete {{ selectedCount }}
+                    </Button>
                     <Button class="products-add-btn" @click="openCreate">
                         <span class="products-add-btn__icon-box">
                             <PackagePlus
@@ -442,6 +540,7 @@ onBeforeUnmount(() => {
 
                 <Table
                     :columns="[
+                        'Select',
                         'Image',
                         'Name',
                         'Company',
@@ -454,12 +553,27 @@ onBeforeUnmount(() => {
                     ]"
                 >
                     <tr v-if="filteredProducts.length === 0">
-                        <td class="products-empty" colspan="9">
+                        <td class="products-empty" colspan="10">
                             No products match your current search/filters.
                         </td>
                     </tr>
 
-                    <tr v-for="product in paginatedProducts" :key="product.id">
+                    <tr
+                        v-for="product in paginatedProducts"
+                        :key="product.id"
+                        :class="{
+                            'vat-row--selected': selectedIds.includes(product.id),
+                        }"
+                    >
+                        <td>
+                            <input
+                                class="vat-checkbox"
+                                type="checkbox"
+                                :checked="selectedIds.includes(product.id)"
+                                :aria-label="`Select ${product.name}`"
+                                @change="toggleSelect(product.id)"
+                            />
+                        </td>
                         <td>
                             <img
                                 v-if="product.image"
@@ -684,18 +798,29 @@ onBeforeUnmount(() => {
 
             <Modal
                 :open="showDeleteModal"
-                title="Delete Product"
+                :title="
+                    pendingDeleteIds.length > 1
+                        ? 'Delete Products'
+                        : 'Delete Product'
+                "
                 @close="closeDeleteModal"
             >
                 <div class="products-delete-confirm">
                     <div class="products-delete-confirm__head">
                         <TriangleAlert class="products-delete-confirm__icon" />
                         <p class="products-delete-confirm__title">
-                            Are you sure you want to delete this product?
+                            {{
+                                pendingDeleteIds.length > 1
+                                    ? `Are you sure you want to delete ${pendingDeleteIds.length} products?`
+                                    : "Are you sure you want to delete this product?"
+                            }}
                         </p>
                     </div>
 
-                    <p class="products-delete-confirm__text">
+                    <p
+                        v-if="pendingDeleteIds.length <= 1"
+                        class="products-delete-confirm__text"
+                    >
                         Product:
                         <strong>{{ pendingDeleteProduct?.name || "-" }}</strong>
                     </p>
@@ -716,7 +841,11 @@ onBeforeUnmount(() => {
                             variant="danger"
                             @click="confirmDelete"
                         >
-                            Delete Product
+                            {{
+                                pendingDeleteIds.length > 1
+                                    ? "Delete Products"
+                                    : "Delete Product"
+                            }}
                         </Button>
                     </div>
                 </div>
