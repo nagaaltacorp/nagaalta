@@ -115,7 +115,7 @@ class Product extends Model
 
     public function unitPriceForSale(?string $unitType): float
     {
-        if ($this->saleUsesRetailConversion($unitType) && $this->usesRetailConversion()) {
+        if ($this->saleUsesRetailConversion($unitType) && $this->retail_price !== null) {
             return (float) $this->retail_price;
         }
 

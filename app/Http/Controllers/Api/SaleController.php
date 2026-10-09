@@ -327,38 +327,13 @@ class SaleController extends Controller
         $product = Product::findOrFail($validated['product_id']);
         $quantity = SaleQuantity::round((float) $validated['quantity']);
         $sellingMode = strtolower(trim((string) ($validated['mode'] ?? '')));
-        $unitType = $this->resolveUnitType(
+        $unitType = $this->unitTypeForSale(
+            $product,
             $validated['unit_type'] ?? null,
-            $product->unit ?? null,
+            $sellingMode,
         );
 
-        if ($sellingMode === 'wholesale') {
-            $unitType = $this->normalizeUnitType($product->unit) ?? $unitType;
-        }
-
-        if ($product->saleNeedsRetailSetup($unitType)) {
-            $wholesaleUnit = $product->unit ?: 'unit';
-            $saleUnit = $unitType ?: 'retail';
-            $retailUnit = $product->retail_unit ?: 'retail unit';
-
-            $message = $product->retail_enabled
-                ? "This sale uses {$saleUnit}, but retail is set to {$retailUnit} per {$wholesaleUnit}."
-                : "Set up retail for this product first (how many {$saleUnit} are in 1 {$wholesaleUnit}).";
-
-            throw new HttpResponseException(response()->json([
-                'message' => $message,
-            ], 422));
-        }
-
-        if ($product->saleUsesRetailConversion($unitType) && $product->retail_price === null) {
-            $retailUnit = $product->retail_unit ?: 'retail unit';
-
-            throw new HttpResponseException(response()->json([
-                'message' => "Set a retail price per {$retailUnit} in Retail Setup before selling this product that way.",
-            ], 422));
-        }
-
-        if (!$product->saleUsesRetailConversion($unitType) && !SaleQuantity::isWhole($quantity)) {
+        if (!$product->saleUsesRetailConversion($unitType) && $sellingMode !== 'retail' && !SaleQuantity::isWhole($quantity)) {
             $retailUnit = $product->retail_unit ?: 'kg';
 
             throw new HttpResponseException(response()->json([
@@ -583,6 +558,27 @@ class SaleController extends Controller
             ?? $resolvedUser?->managedBranch?->id;
     }
 
+    private function unitTypeForSale(Product $product, ?string $requestedUnit, string $mode): ?string
+    {
+        if ($mode === 'retail' && $product->usesRetailConversion()) {
+            return $this->normalizeUnitType($product->retail_unit)
+                ?? $this->resolveUnitType($requestedUnit, $product->unit);
+        }
+
+        if ($mode === 'wholesale') {
+            return $this->normalizeUnitType($product->unit)
+                ?? $this->resolveUnitType($requestedUnit, null);
+        }
+
+        $resolved = $this->resolveUnitType($requestedUnit, $product->unit);
+
+        if ($resolved !== null && !$product->saleNeedsRetailSetup($resolved)) {
+            return $resolved;
+        }
+
+        return $this->normalizeUnitType($product->unit) ?? $resolved;
+    }
+
     private function resolveUnitType(?string $requestedUnitType, ?string $productUnit): ?string
     {
         $normalizedRequestUnitType = $this->normalizeUnitType($requestedUnitType);
@@ -606,16 +602,8 @@ class SaleController extends Controller
             return null;
         }
 
-        if (str_contains($normalizedUnitType, 'bag')) {
-            return 'bag';
-        }
-
-        if (str_contains($normalizedUnitType, 'sack')) {
-            return 'sack';
-        }
-
-        // Keep the admin's unit, including "1 kg". Do not rewrite it to "kilo",
-        // or a wholesale sale no longer matches and asks for retail setup.
+        // Keep the admin's unit as entered, including "1 kg", "1 sack", and "1 bag".
+        // Shortening it makes the sale miss the product and ask for retail setup.
         return substr($normalizedUnitType, 0, 50);
     }
 
