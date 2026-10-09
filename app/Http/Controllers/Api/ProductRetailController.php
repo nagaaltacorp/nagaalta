@@ -79,7 +79,7 @@ class ProductRetailController extends Controller
 
                 Product::where('id', $item['id'])->update([
                     'retail_enabled' => $enabled,
-                    'retail_unit' => $this->normalizeRetailUnit($item['retail_unit'] ?? null),
+                    'retail_unit' => $this->normalizeRetailUnit($item['retail_unit'] ?? null) ?? '',
                     'retail_qty_per_unit' => $enabled
                         ? (int) $item['retail_qty_per_unit']
                         : ($item['retail_qty_per_unit'] ?? null),
@@ -118,11 +118,15 @@ class ProductRetailController extends Controller
         return SaleQuantity::round(max(0, $quantity));
     }
 
-    private function normalizeRetailUnit(?string $unit): string
+    private function normalizeRetailUnit(?string $unit): ?string
     {
         $normalized = strtolower(trim((string) $unit));
 
-        if ($normalized === '' || str_contains($normalized, 'kilo')) {
+        if ($normalized === '') {
+            return null;
+        }
+
+        if (str_contains($normalized, 'kilo')) {
             return 'kg';
         }
 

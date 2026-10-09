@@ -43,7 +43,44 @@ const formatQty = (value) => {
     return String(numeric);
 };
 
-const retailUnitOf = (product) => product?.retail_unit || "kg";
+const retailUnitOf = (product) => String(product?.retail_unit || "").trim();
+
+const adminSetRetail = (product) =>
+    Boolean(product?.retail_enabled) ||
+    (product?.retail_qty_per_unit !== null &&
+        product?.retail_qty_per_unit !== "" &&
+        Number(product?.retail_qty_per_unit) > 0) ||
+    (product?.retail_price !== null &&
+        product?.retail_price !== "" &&
+        Number(product?.retail_price) > 0);
+
+const storedRetailUnit = (product) => {
+    const unit = retailUnitOf(product);
+
+    if (!unit) {
+        return "";
+    }
+
+    if (!adminSetRetail(product) && unit === "kg") {
+        return "";
+    }
+
+    return unit;
+};
+
+const wholesaleMeasure = (unit) => {
+    const text = String(unit || "").trim();
+
+    if (!text) {
+        return "unit";
+    }
+
+    if (/^\d/.test(text)) {
+        return text;
+    }
+
+    return `1 ${text}`;
+};
 
 const retailUnitChoices = computed(() => {
     const baseUnits = [
@@ -244,7 +281,6 @@ const selectedProducts = () =>
 const enableRetailOnSelected = () => {
     selectedProducts().forEach((product) => {
         product.retail_enabled = true;
-        product.retail_unit = retailUnitOf(product);
     });
 };
 
@@ -256,10 +292,6 @@ const disableRetailOnSelected = () => {
 
 const onRetailToggle = (product, enabled) => {
     product.retail_enabled = enabled;
-
-    if (enabled) {
-        product.retail_unit = retailUnitOf(product);
-    }
 };
 
 const conversionLabel = (product) => {
@@ -267,10 +299,10 @@ const conversionLabel = (product) => {
         return "—";
     }
 
-    const wholesale = product.unit || "unit";
+    const wholesale = wholesaleMeasure(product.unit);
     const retail = retailUnitOf(product);
 
-    return `1 ${wholesale} = ${product.retail_qty_per_unit} ${retail}`;
+    return `${wholesale} = ${product.retail_qty_per_unit} ${retail}`;
 };
 
 const openView = (product) => {
@@ -343,16 +375,18 @@ const viewDetails = computed(() => {
         enabled,
         allowedLoss: displayQuantity(allowedLoss),
         sellableRetail: displayQuantity(sellableRetail),
-        conversion: enabled ? `1 ${wholesaleUnit} = ${qtyPer} ${retailUnit}` : "—",
+        conversion: enabled
+            ? `${wholesaleMeasure(wholesaleUnit)} = ${qtyPer} ${retailUnit}`
+            : "—",
         reverse: enabled
             ? `1 ${retailUnit} = ${(1 / qtyPer).toFixed(4)} ${wholesaleUnit}`
             : "—",
         examples: enabled
             ? [
-                  `1 ${wholesaleUnit} = ${qtyPer} ${retailUnit}`,
-                  `2 ${wholesaleUnit} = ${qtyPer * 2} ${retailUnit}`,
-                  `5 ${wholesaleUnit} = ${qtyPer * 5} ${retailUnit}`,
-                  `1 ${retailUnit} deducts 1/${qtyPer} ${wholesaleUnit}`,
+                  `${wholesaleMeasure(wholesaleUnit)} = ${qtyPer} ${retailUnit}`,
+                  `2 × ${wholesaleUnit || "unit"} = ${qtyPer * 2} ${retailUnit}`,
+                  `5 × ${wholesaleUnit || "unit"} = ${qtyPer * 5} ${retailUnit}`,
+                  `1 ${retailUnit} deducts 1/${qtyPer} ${wholesaleUnit || "unit"}`,
               ]
             : [],
         equivalentWholesaleValue,
@@ -369,7 +403,7 @@ const loadData = async () => {
     products.value = (productPayload.data ?? []).map((product) => ({
         ...product,
         retail_enabled: Boolean(product.retail_enabled),
-        retail_unit: retailUnitOf(product),
+        retail_unit: storedRetailUnit(product),
         retail_qty_per_unit: product.retail_qty_per_unit ?? "",
         retail_price: product.retail_price ?? "",
         retail_allowed_loss: displayQuantity(product.retail_allowed_loss ?? 0),
@@ -653,7 +687,7 @@ onMounted(loadData);
                                     type="number"
                                     min="1"
                                     step="1"
-                                    placeholder="50"
+                                    placeholder=""
                                     :disabled="!product.retail_enabled"
                                 />
                                 <div class="retail-unit-wrap">
@@ -662,6 +696,7 @@ onMounted(loadData);
                                         class="input retail-unit-select"
                                         :disabled="!product.retail_enabled"
                                     >
+                                        <option value="">Unit</option>
                                         <option
                                             v-if="
                                                 product.retail_unit &&
@@ -699,7 +734,7 @@ onMounted(loadData);
                                     placeholder="0.00"
                                     :disabled="!product.retail_enabled"
                                 />
-                                <span>
+                                <span v-if="retailUnitOf(product)">
                                     / {{ retailUnitOf(product) }}
                                 </span>
                             </label>
@@ -714,7 +749,7 @@ onMounted(loadData);
                                     title="Examples: 1/4, 1/2, 0.25, 1 1/4"
                                     :disabled="!product.retail_enabled"
                                 />
-                                <span>
+                                <span v-if="retailUnitOf(product)">
                                     {{ retailUnitOf(product) }}
                                 </span>
                             </label>

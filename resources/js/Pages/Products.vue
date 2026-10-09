@@ -718,7 +718,7 @@ onBeforeUnmount(() => {
                                     type="number"
                                     min="0"
                                     step="any"
-                                    placeholder="50"
+                                    placeholder="Size"
                                     aria-label="Unit size"
                                 />
                                 <select
