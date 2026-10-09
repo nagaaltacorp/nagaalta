@@ -135,7 +135,7 @@ class ProductSellingController extends Controller
         }
 
         $unit = $isRetail
-            ? ($product->retail_unit ?: 'kg')
+            ? trim((string) $product->retail_unit)
             : $product->unit_label;
         $price = $isRetail
             ? (float) $product->retail_price
@@ -169,7 +169,7 @@ class ProductSellingController extends Controller
             'available_quantity' => $available,
             'wholesale_unit' => $product->unit_label,
             'wholesale_quantity' => $stock['wholesale_quantity'],
-            'retail_unit' => $product->retail_unit ?: 'kg',
+            'retail_unit' => trim((string) $product->retail_unit),
             'retail_qty_per_unit' => $product->usesRetailConversion()
                 ? (int) $product->retail_qty_per_unit
                 : null,
@@ -212,11 +212,15 @@ class ProductSellingController extends Controller
             return null;
         }
 
-        $wholesale = $product->unit ?: 'unit';
-        $retail = $product->retail_unit ?: 'kg';
+        $wholesale = trim((string) $product->unit);
+        $retail = trim((string) $product->retail_unit);
         $qtyPer = (int) $product->retail_qty_per_unit;
 
-        return "1 {$wholesale} = {$qtyPer} {$retail}";
+        if ($wholesale === '' || $retail === '' || $qtyPer < 1) {
+            return null;
+        }
+
+        return "{$wholesale} = {$qtyPer} {$retail}";
     }
 
     private function vatAmountForPrice(Product $product, float $price): float
