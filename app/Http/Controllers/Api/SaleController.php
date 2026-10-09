@@ -18,6 +18,7 @@ use Illuminate\Http\Request;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Validation\ValidationException;
 
@@ -284,7 +285,11 @@ class SaleController extends Controller
             $validated['borrower_phone'] = $this->resolveBorrowerPhone($request);
             $validated['valid_id_bytes'] = $this->validIdBytes($request);
 
-            if ($validated['borrower_phone'] === null && $validated['valid_id_bytes'] === null) {
+            if (
+                $validated['borrower_phone'] === null
+                && $validated['valid_id_bytes'] === null
+                && $this->salesHaveUtangProofColumns()
+            ) {
                 throw ValidationException::withMessages([
                     'borrower_phone' => 'Enter a phone number or attach a valid ID for this utang.',
                 ]);
@@ -367,12 +372,15 @@ class SaleController extends Controller
             $paymentMethod,
             $validated['borrower_name'] ?? null,
             $validated['due_date'] ?? null,
-            $validated['borrower_phone'] ?? null,
+            Schema::hasColumn('sales', 'borrower_phone')
+                ? ($validated['borrower_phone'] ?? null)
+                : null,
         );
 
         $validIdPath = null;
+        $canStoreValidId = Schema::hasColumn('sales', 'valid_id_path');
 
-        if ($paymentMethod === 'utang') {
+        if ($paymentMethod === 'utang' && $canStoreValidId) {
             $validIdPath = $this->existingValidIdPath($ticketSaleNumber);
             $validIdBytes = $validated['valid_id_bytes'] ?? null;
 
@@ -394,10 +402,18 @@ class SaleController extends Controller
             'total_price' => $totalPrice,
             'payment_method' => $paymentMethod,
             'borrower_name' => $paymentMethod === 'utang' ? $validated['borrower_name'] : null,
-            'borrower_phone' => $paymentMethod === 'utang' ? ($validated['borrower_phone'] ?? null) : null,
-            'valid_id_path' => $paymentMethod === 'utang' ? $validIdPath : null,
             'due_date' => $paymentMethod === 'utang' ? $validated['due_date'] : null,
         ];
+
+        if (Schema::hasColumn('sales', 'borrower_phone')) {
+            $attributes['borrower_phone'] = $paymentMethod === 'utang'
+                ? ($validated['borrower_phone'] ?? null)
+                : null;
+        }
+
+        if ($canStoreValidId) {
+            $attributes['valid_id_path'] = $paymentMethod === 'utang' ? $validIdPath : null;
+        }
 
         if ($ticketSaleNumber !== null) {
             $attributes['sale_number'] = $ticketSaleNumber;
@@ -686,6 +702,12 @@ class SaleController extends Controller
         }
 
         return $phone;
+    }
+
+    private function salesHaveUtangProofColumns(): bool
+    {
+        return Schema::hasColumn('sales', 'borrower_phone')
+            || Schema::hasColumn('sales', 'valid_id_path');
     }
 
     private function borrowerPhoneDigits(?string $phone): string
