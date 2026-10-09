@@ -90,15 +90,19 @@ const splitUnit = (value) => {
     const match = text.match(/^(\d+(?:\.\d+)?)\s*(.+)$/);
 
     if (!match || !match[2].trim()) {
-        return { size: "", unit: text || "pcs" };
+        return { size: "", unit: text };
     }
 
     return { size: match[1], unit: match[2].trim() };
 };
 
 const composedUnit = () => {
-    const unit = String(form.unit || "").trim() || "pcs";
+    const unit = String(form.unit || "").trim();
     const size = String(form.unitSize ?? "").trim();
+
+    if (!unit) {
+        return "";
+    }
 
     if (!size) {
         return unit;
@@ -333,7 +337,7 @@ const resetForm = () => {
     form.category = "";
     form.company_name = "";
     form.unitSize = "";
-    form.unit = "pcs";
+    form.unit = "";
     form.price = "";
     form.description = "";
     form.image = null;
@@ -726,6 +730,7 @@ onBeforeUnmount(() => {
                                     class="input"
                                     aria-label="Unit"
                                 >
+                                    <option value="">Unit</option>
                                     <option
                                         v-for="unit in unitChoices"
                                         :key="unit"

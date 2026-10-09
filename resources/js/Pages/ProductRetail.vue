@@ -47,39 +47,29 @@ const retailUnitOf = (product) => String(product?.retail_unit || "").trim();
 
 const adminSetRetail = (product) =>
     Boolean(product?.retail_enabled) ||
-    (product?.retail_qty_per_unit !== null &&
-        product?.retail_qty_per_unit !== "" &&
-        Number(product?.retail_qty_per_unit) > 0) ||
     (product?.retail_price !== null &&
         product?.retail_price !== "" &&
         Number(product?.retail_price) > 0);
 
 const storedRetailUnit = (product) => {
-    const unit = retailUnitOf(product);
-
-    if (!unit) {
+    if (!adminSetRetail(product)) {
         return "";
     }
 
-    if (!adminSetRetail(product) && unit === "kg") {
-        return "";
-    }
+    return retailUnitOf(product);
+};
 
-    return unit;
+const unitNameOnly = (value) => {
+    const text = String(value || "").trim();
+    const match = text.match(/^\d+(?:\.\d+)?\s+(.+)$/);
+
+    return (match ? match[1] : text).trim();
 };
 
 const wholesaleMeasure = (unit) => {
     const text = String(unit || "").trim();
 
-    if (!text) {
-        return "unit";
-    }
-
-    if (/^\d/.test(text)) {
-        return text;
-    }
-
-    return `1 ${text}`;
+    return text || "unit";
 };
 
 const retailUnitChoices = computed(() => {
@@ -108,14 +98,14 @@ const retailUnitChoices = computed(() => {
     const units = new Set(baseUnits);
 
     products.value.forEach((product) => {
-        const wholesale = (product.unit || "").trim();
-        const retail = (product.retail_unit || "").trim();
+        const wholesale = unitNameOnly(product.unit);
+        const retail = unitNameOnly(product.retail_unit);
 
-        if (wholesale) {
+        if (wholesale && !/\d/.test(wholesale)) {
             units.add(wholesale);
         }
 
-        if (retail) {
+        if (retail && !/\d/.test(retail)) {
             units.add(retail);
         }
     });
@@ -404,7 +394,9 @@ const loadData = async () => {
         ...product,
         retail_enabled: Boolean(product.retail_enabled),
         retail_unit: storedRetailUnit(product),
-        retail_qty_per_unit: product.retail_qty_per_unit ?? "",
+        retail_qty_per_unit: adminSetRetail(product)
+            ? (product.retail_qty_per_unit ?? "")
+            : "",
         retail_price: product.retail_price ?? "",
         retail_allowed_loss: displayQuantity(product.retail_allowed_loss ?? 0),
     }));
