@@ -54,6 +54,7 @@ Route::middleware('web')->group(function () {
     Route::get('/sales/export/{format}', [SaleController::class, 'export']);
     Route::get('/utang', [UtangController::class, 'index']);
     Route::post('/utang/pay', [UtangController::class, 'markPaid']);
+    Route::post('/utang/undo', [UtangController::class, 'markUnpaid']);
     Route::get('/daily-sales-reports', [DailySalesReportController::class, 'index']);
     Route::get('/daily-sales-reports/{id}', [DailySalesReportController::class, 'show']);
     Route::get('/daily-sales-reports/{id}/pdf', [DailySalesReportController::class, 'pdf']);

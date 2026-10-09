@@ -15,8 +15,10 @@ use App\Support\SaleQuantity;
 use Illuminate\Database\QueryException;
 use Illuminate\Http\Exceptions\HttpResponseException;
 use Illuminate\Http\Request;
+use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Storage;
 use Illuminate\Validation\ValidationException;
 
 class SaleController extends Controller
@@ -278,6 +280,17 @@ class SaleController extends Controller
 
             $validated['borrower_name'] = $borrowerName;
             $validated['due_date'] = Carbon::parse($dueDate)->toDateString();
+            $validated['borrower_phone'] = $this->resolveBorrowerPhone($request);
+            $validated['valid_id_bytes'] = $this->validIdBytes($request);
+
+            if ($validated['borrower_phone'] === null && $validated['valid_id_bytes'] === null) {
+                throw ValidationException::withMessages([
+                    'borrower_phone' => 'Enter a phone number or attach a valid ID for this utang.',
+                ]);
+            }
+        } else {
+            $validated['borrower_phone'] = null;
+            $validated['valid_id_bytes'] = null;
         }
 
         return $validated;
@@ -297,6 +310,17 @@ class SaleController extends Controller
 
         if ($idempotencyKey === '') {
             $idempotencyKey = null;
+        }
+
+        if ($idempotencyKey !== null) {
+            $existingSale = Sale::with([
+                'product',
+                'processedBy:id,name,user_name,email',
+            ])->where('idempotency_key', $idempotencyKey)->first();
+
+            if ($existingSale) {
+                return [$this->ensureSaleNumber($existingSale), false];
+            }
         }
 
         $product = Product::findOrFail($validated['product_id']);
@@ -362,7 +386,19 @@ class SaleController extends Controller
             $paymentMethod,
             $validated['borrower_name'] ?? null,
             $validated['due_date'] ?? null,
+            $validated['borrower_phone'] ?? null,
         );
+
+        $validIdPath = null;
+
+        if ($paymentMethod === 'utang') {
+            $validIdPath = $this->existingValidIdPath($ticketSaleNumber);
+            $validIdBytes = $validated['valid_id_bytes'] ?? null;
+
+            if ($validIdPath === null && is_string($validIdBytes) && $validIdBytes !== '') {
+                $validIdPath = $this->storeValidId($validIdBytes, $ticketSaleNumber);
+            }
+        }
 
         $attributes = [
             'product_id' => $product->id,
@@ -377,6 +413,8 @@ class SaleController extends Controller
             'total_price' => $totalPrice,
             'payment_method' => $paymentMethod,
             'borrower_name' => $paymentMethod === 'utang' ? $validated['borrower_name'] : null,
+            'borrower_phone' => $paymentMethod === 'utang' ? ($validated['borrower_phone'] ?? null) : null,
+            'valid_id_path' => $paymentMethod === 'utang' ? $validIdPath : null,
             'due_date' => $paymentMethod === 'utang' ? $validated['due_date'] : null,
         ];
 
@@ -594,6 +632,7 @@ class SaleController extends Controller
         string $paymentMethod,
         ?string $borrowerName,
         ?string $dueDate,
+        ?string $borrowerPhone = null,
     ): void {
         if ($saleNumber === null || trim($saleNumber) === '') {
             return;
@@ -621,14 +660,133 @@ class SaleController extends Controller
 
         $existingDue = optional($existing->due_date)?->toDateString();
 
+        $existingPhone = $this->borrowerPhoneDigits($existing->borrower_phone);
+        $incomingPhone = $this->borrowerPhoneDigits($borrowerPhone);
+
         if (
             strcasecmp(trim((string) $existing->borrower_name), trim((string) $borrowerName)) !== 0
             || $existingDue !== $dueDate
+            || $existingPhone !== $incomingPhone
         ) {
             throw ValidationException::withMessages([
-                'borrower_name' => 'Use the same borrower name and due date on every item in this utang.',
+                'borrower_name' => 'Use the same borrower name, phone, and due date on every item in this utang.',
             ]);
         }
+    }
+
+    private function resolveBorrowerPhone(Request $request): ?string
+    {
+        $phone = trim((string) $request->input('borrower_phone', ''));
+
+        if ($phone === '') {
+            return null;
+        }
+
+        $digits = $this->borrowerPhoneDigits($phone);
+
+        if (strlen($digits) < 10) {
+            throw ValidationException::withMessages([
+                'borrower_phone' => 'Enter a phone number with at least 10 digits.',
+            ]);
+        }
+
+        if (strlen($phone) > 40) {
+            $phone = substr($digits, 0, 40);
+        }
+
+        return $phone;
+    }
+
+    private function borrowerPhoneDigits(?string $phone): string
+    {
+        return preg_replace('/\D+/', '', (string) $phone) ?? '';
+    }
+
+    private function validIdBytes(Request $request): ?string
+    {
+        $upload = $request->file('valid_id');
+
+        if ($upload instanceof UploadedFile && $upload->isValid()) {
+            try {
+                $bytes = $this->jpegBytes($upload->getContent());
+            } catch (\Throwable) {
+                $bytes = null;
+            }
+
+            if ($bytes !== null) {
+                return $bytes;
+            }
+        }
+
+        return $this->jpegBytesFromBase64($request->input('valid_id_image'));
+    }
+
+    private function jpegBytes(mixed $contents): ?string
+    {
+        if (!is_string($contents) || strlen($contents) < 3) {
+            return null;
+        }
+
+        return str_starts_with($contents, "\xFF\xD8\xFF") ? $contents : null;
+    }
+
+    private function jpegBytesFromBase64(mixed $encoded): ?string
+    {
+        if (!is_string($encoded)) {
+            return null;
+        }
+
+        $payload = trim($encoded);
+
+        if ($payload === '') {
+            return null;
+        }
+
+        if (str_contains($payload, ',')) {
+            $payload = substr($payload, (int) strrpos($payload, ',') + 1);
+        }
+
+        $payload = preg_replace('/\s+/', '', $payload) ?? '';
+        $decoded = base64_decode($payload, true);
+
+        return $this->jpegBytes($decoded);
+    }
+
+    private function existingValidIdPath(?string $saleNumber): ?string
+    {
+        $saleNumber = trim((string) $saleNumber);
+
+        if ($saleNumber === '') {
+            return null;
+        }
+
+        $path = Sale::query()
+            ->where('sale_number', $saleNumber)
+            ->whereNotNull('valid_id_path')
+            ->orderBy('id')
+            ->value('valid_id_path');
+
+        return is_string($path) && trim($path) !== '' ? $path : null;
+    }
+
+    private function storeValidId(string $bytes, ?string $saleNumber): string
+    {
+        $path = $this->validIdStoragePath($saleNumber);
+        Storage::disk('public')->put($path, $bytes);
+
+        return $path;
+    }
+
+    private function validIdStoragePath(?string $saleNumber): string
+    {
+        $name = preg_replace('/[^A-Za-z0-9._-]+/', '-', trim((string) $saleNumber)) ?? '';
+        $name = trim($name, '-');
+
+        if ($name === '') {
+            $name = 'sale-'.now()->format('YmdHis');
+        }
+
+        return 'utang-ids/'.substr($name, 0, 80).'.jpg';
     }
 
     private function resolveClientProcessedAt(array $validated): ?Carbon

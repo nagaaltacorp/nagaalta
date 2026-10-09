@@ -12,8 +12,8 @@ const { turnstileSiteKey } = defineProps({
 });
 
 const form = useForm({
-    email: "admin@naac.local",
-    password: "Admin@123",
+    email: "",
+    password: "",
     remember: true,
     turnstile_token: "",
 });

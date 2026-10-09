@@ -5,6 +5,7 @@ namespace App\Models;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Support\Carbon;
+use Illuminate\Support\Facades\Storage;
 
 class Sale extends Model
 {
@@ -23,6 +24,8 @@ class Sale extends Model
         'total_price',
         'payment_method',
         'borrower_name',
+        'borrower_phone',
+        'valid_id_path',
         'due_date',
         'paid_at',
         'replaces_sale_id',
@@ -35,6 +38,7 @@ class Sale extends Model
         'quantity_display',
         'is_replaced',
         'is_replacement',
+        'valid_id_url',
     ];
 
     protected $casts = [
@@ -59,6 +63,33 @@ class Sale extends Model
             (float) $this->quantity,
             $this->quantity_label,
         );
+    }
+
+    public function getValidIdUrlAttribute(): ?string
+    {
+        $path = trim((string) ($this->attributes['valid_id_path'] ?? ''));
+
+        if ($path === '') {
+            return null;
+        }
+
+        if (
+            str_starts_with($path, 'http://')
+            || str_starts_with($path, 'https://')
+            || str_starts_with($path, '/')
+        ) {
+            return $path;
+        }
+
+        $url = Storage::disk('public')->url($path);
+
+        if (str_starts_with($url, 'http://') || str_starts_with($url, 'https://')) {
+            $relative = parse_url($url, PHP_URL_PATH);
+
+            return is_string($relative) && $relative !== '' ? $relative : $url;
+        }
+
+        return $url;
     }
 
     protected static function booted(): void

@@ -9,7 +9,7 @@ return new class extends Migration
 {
     public function up(): void
     {
-        if (Schema::hasTable('sales') && Schema::hasColumn('sales', 'quantity')) {
+        if (Schema::hasTable('sales') && Schema::hasColumn('sales', 'quantity') && Schema::getConnection()->getDriverName() !== 'sqlite') {
             DB::statement('ALTER TABLE sales MODIFY quantity DECIMAL(12,4) NOT NULL DEFAULT 1');
         }
 
@@ -19,7 +19,7 @@ return new class extends Migration
             });
         }
 
-        if (Schema::hasTable('inventories') && Schema::hasColumn('inventories', 'retail_remainder')) {
+        if (Schema::hasTable('inventories') && Schema::hasColumn('inventories', 'retail_remainder') && Schema::getConnection()->getDriverName() !== 'sqlite') {
             DB::statement('ALTER TABLE inventories MODIFY retail_remainder DECIMAL(12,4) NOT NULL DEFAULT 0');
         }
     }
@@ -32,11 +32,11 @@ return new class extends Migration
             });
         }
 
-        if (Schema::hasTable('sales') && Schema::hasColumn('sales', 'quantity')) {
+        if (Schema::hasTable('sales') && Schema::hasColumn('sales', 'quantity') && Schema::getConnection()->getDriverName() !== 'sqlite') {
             DB::statement('ALTER TABLE sales MODIFY quantity INT UNSIGNED NOT NULL');
         }
 
-        if (Schema::hasTable('inventories') && Schema::hasColumn('inventories', 'retail_remainder')) {
+        if (Schema::hasTable('inventories') && Schema::hasColumn('inventories', 'retail_remainder') && Schema::getConnection()->getDriverName() !== 'sqlite') {
             DB::statement('ALTER TABLE inventories MODIFY retail_remainder INT UNSIGNED NOT NULL DEFAULT 0');
         }
     }

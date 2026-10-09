@@ -74,6 +74,35 @@ class UtangController extends Controller
         ]);
     }
 
+    public function markUnpaid(Request $request)
+    {
+        $validated = $request->validate([
+            'sale_number' => ['required', 'string', 'max:32'],
+        ]);
+
+        $saleNumber = trim($validated['sale_number']);
+        $updated = Sale::query()
+            ->where('sale_number', $saleNumber)
+            ->whereRaw('LOWER(payment_method) = ?', ['utang'])
+            ->whereNotNull('paid_at')
+            ->update([
+                'paid_at' => null,
+                'updated_at' => Carbon::now(),
+            ]);
+
+        if ($updated === 0) {
+            return response()->json([
+                'message' => 'No paid utang was found for that receipt.',
+            ], 422);
+        }
+
+        return response()->json([
+            'message' => 'Utang payment was undone.',
+            'sale_number' => $saleNumber,
+            'unpaid_lines' => $updated,
+        ]);
+    }
+
     private function utangQuery()
     {
         return Sale::query()
