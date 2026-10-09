@@ -236,6 +236,7 @@ class SaleController extends Controller
             'processed_by_user_id' => ['nullable', 'exists:users,id'],
             'user_id' => ['nullable', 'exists:users,id'],
             'unit_type' => ['nullable', 'string', 'max:50'],
+            'mode' => ['nullable', 'string', 'max:20'],
             'discount_percent' => ['nullable', 'numeric', 'min:0', 'max:100'],
             'discount_password' => ['nullable', 'string', 'max:50'],
             'discount_token' => ['nullable', 'string', 'max:80'],
@@ -325,10 +326,15 @@ class SaleController extends Controller
 
         $product = Product::findOrFail($validated['product_id']);
         $quantity = SaleQuantity::round((float) $validated['quantity']);
+        $sellingMode = strtolower(trim((string) ($validated['mode'] ?? '')));
         $unitType = $this->resolveUnitType(
             $validated['unit_type'] ?? null,
             $product->unit ?? null,
         );
+
+        if ($sellingMode === 'wholesale') {
+            $unitType = $this->normalizeUnitType($product->unit) ?? $unitType;
+        }
 
         if ($product->saleNeedsRetailSetup($unitType)) {
             $wholesaleUnit = $product->unit ?: 'unit';
@@ -608,11 +614,8 @@ class SaleController extends Controller
             return 'sack';
         }
 
-        if (str_contains($normalizedUnitType, 'kilo') || str_contains($normalizedUnitType, 'kg')) {
-            return 'kilo';
-        }
-
-        // Keep other unit labels (pcs, box, tray, etc.) instead of dropping them.
+        // Keep the admin's unit, including "1 kg". Do not rewrite it to "kilo",
+        // or a wholesale sale no longer matches and asks for retail setup.
         return substr($normalizedUnitType, 0, 50);
     }
 
