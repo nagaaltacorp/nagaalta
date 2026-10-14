@@ -1,7 +1,7 @@
 <script setup>
 import { Head, Link, usePage } from "@inertiajs/vue3";
-import { Eye, Filter, Search, SquarePen, Trash2, TriangleAlert } from "lucide-vue-next";
-import { computed, onBeforeUnmount, onMounted, reactive, ref } from "vue";
+import { Check, Eye, Filter, Search, SquarePen, Trash2, TriangleAlert } from "lucide-vue-next";
+import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from "vue";
 import { toast } from "vue-sonner";
 import AppLayout from "../components/layout/AppLayout.vue";
 import Button from "../components/ui/Button.vue";
@@ -33,6 +33,8 @@ const showRevenueLogs = ref(false);
 const editingId = ref(null);
 const isSaving = ref(false);
 const isPolling = ref(false);
+const productSearchQuery = ref("");
+const productSearchInput = ref(null);
 const pollIntervalMs = 15000;
 let pollTimer = null;
 
@@ -84,31 +86,26 @@ const refreshInventories = async () => {
     }
 };
 
-const catalogProducts = computed(() =>
-    [...mainStock.value]
-        .filter((item) => item.product)
-        .sort((a, b) =>
-            String(a.product.name || "").localeCompare(
-                String(b.product.name || ""),
-            ),
-        )
-        .map((item) => ({
-            id: item.product.id,
-            name: item.product.name,
-            unit: item.product.unit,
-            available_quantity: Number(item.quantity || 0),
-        })),
-);
+const toCatalogProduct = (product, availableQuantity) => ({
+    id: product.id,
+    name: product.name,
+    unit: product.unit,
+    category: product.category,
+    image: product.image,
+    price: product.price,
+    description: product.description,
+    available_quantity: Number(availableQuantity || 0),
+});
 
-const availableMainQuantity = computed(() => {
-    const productId = Number(form.product_id);
+const availableForProduct = (productId) => {
+    const id = Number(productId);
 
-    if (!productId) {
+    if (!id) {
         return 0;
     }
 
     const mainItem = mainStock.value.find(
-        (item) => Number(item.product_id) === productId,
+        (item) => Number(item.product_id) === id,
     );
     let available = Number(mainItem?.quantity || 0);
 
@@ -120,13 +117,74 @@ const availableMainQuantity = computed(() => {
             current?.product?.id ?? current?.product_id,
         );
 
-        if (current && currentProductId === productId) {
+        if (current && currentProductId === id) {
             available += Number(current.quantity || 0);
         }
     }
 
     return available;
+};
+
+const catalogProducts = computed(() => {
+    const products = [...mainStock.value]
+        .filter((item) => item.product)
+        .map((item) =>
+            toCatalogProduct(item.product, availableForProduct(item.product.id)),
+        );
+
+    if (editingId.value) {
+        const current = inventories.value.find(
+            (item) => item.id === editingId.value,
+        );
+        const currentProduct = current?.product;
+
+        if (
+            currentProduct &&
+            !products.some(
+                (product) => Number(product.id) === Number(currentProduct.id),
+            )
+        ) {
+            products.push(
+                toCatalogProduct(
+                    currentProduct,
+                    availableForProduct(currentProduct.id),
+                ),
+            );
+        }
+    }
+
+    return products.sort((a, b) =>
+        String(a.name || "").localeCompare(String(b.name || "")),
+    );
 });
+
+const filteredCatalogProducts = computed(() => {
+    const query = productSearchQuery.value.trim().toLowerCase();
+
+    if (!query) {
+        return catalogProducts.value;
+    }
+
+    return catalogProducts.value.filter((product) => {
+        const haystack = [product.name, product.category, product.unit]
+            .filter(Boolean)
+            .join(" ")
+            .toLowerCase();
+
+        return haystack.includes(query);
+    });
+});
+
+const selectedProduct = computed(
+    () =>
+        catalogProducts.value.find(
+            (product) => String(product.id) === String(form.product_id),
+        ) ?? null,
+);
+
+const availableMainQuantity = computed(() =>
+    availableForProduct(form.product_id),
+);
 
 const branchOptions = computed(() =>
     [...branches.value].sort((a, b) => a.name.localeCompare(b.name)),
@@ -409,6 +467,19 @@ const resetForm = () => {
     form.product_id = "";
     form.quantity = "";
     editingId.value = null;
+    productSearchQuery.value = "";
+};
+
+const selectProduct = (product) => {
+    form.product_id = String(product.id);
+};
+
+const selectFirstMatch = () => {
+    const firstAvailable = filteredCatalogProducts.value[0];
+
+    if (firstAvailable) {
+        selectProduct(firstAvailable);
+    }
 };
 
 const openCreate = () => {
@@ -419,6 +490,7 @@ const openCreate = () => {
     }
 
     showModal.value = true;
+    nextTick(() => productSearchInput.value?.focus());
 };
 
 const openEdit = (item) => {
@@ -426,11 +498,18 @@ const openEdit = (item) => {
     form.product_id = item.product?.id ? String(item.product.id) : "";
     form.quantity = item.quantity ?? "";
     editingId.value = item.id;
+    productSearchQuery.value = "";
     showModal.value = true;
+    nextTick(() => productSearchInput.value?.focus());
 };
 
 const saveInventory = async () => {
     if (isSaving.value) {
+        return;
+    }
+
+    if (!form.product_id) {
+        toast.error("Select a product first.");
         return;
     }
 
@@ -493,6 +572,18 @@ const confirmDelete = async () => {
         );
     }
 };
+
+watch([() => form.product_id, productSearchQuery], () => {
+    if (!form.product_id) {
+        return;
+    }
+
+    nextTick(() => {
+        document
+            .querySelector(".product-picker__item--selected")
+            ?.scrollIntoView({ block: "nearest" });
+    });
+});
 
 onMounted(() => {
     loadData();
@@ -700,9 +791,171 @@ onBeforeUnmount(() => {
             <Modal
                 :open="showModal"
                 :title="editingId ? 'Edit Inventory' : 'Add stock'"
+                landscape
+                fill
                 @close="showModal = false"
             >
-                <form class="form-grid" @submit.prevent="saveInventory">
+                <form
+                    class="inventory-landscape inventory-landscape--branch"
+                    @submit.prevent="saveInventory"
+                >
+                    <div class="inventory-landscape__body">
+                    <div class="form-field product-picker-field">
+                        <span class="form-field__label">
+                            Product (Main Inventory)
+                        </span>
+
+                        <div class="product-picker">
+                            <label class="product-picker__search">
+                                <Search class="products-control-icon" />
+                                <input
+                                    ref="productSearchInput"
+                                    v-model="productSearchQuery"
+                                    class="input"
+                                    type="text"
+                                    placeholder="Search product by name, category, or unit"
+                                    autocomplete="off"
+                                    :disabled="catalogProducts.length === 0"
+                                    @keydown.enter.prevent="selectFirstMatch"
+                                />
+                            </label>
+
+                            <p
+                                v-if="catalogProducts.length === 0"
+                                class="product-picker__empty"
+                            >
+                                No products in Main Inventory
+                            </p>
+
+                            <div
+                                v-else
+                                class="product-picker__list scrollbar-page"
+                                role="listbox"
+                                aria-label="Products from Main Inventory"
+                            >
+                                <button
+                                    v-for="product in filteredCatalogProducts"
+                                    :key="product.id"
+                                    type="button"
+                                    class="product-picker__item"
+                                    :class="{
+                                        'product-picker__item--selected':
+                                            String(form.product_id) ===
+                                            String(product.id),
+                                    }"
+                                    role="option"
+                                    :aria-selected="
+                                        String(form.product_id) ===
+                                        String(product.id)
+                                    "
+                                    @click="selectProduct(product)"
+                                >
+                                    <img
+                                        v-if="product.image"
+                                        :src="product.image"
+                                        :alt="product.name"
+                                        class="product-picker__thumb"
+                                    />
+                                    <span
+                                        v-else
+                                        class="product-picker__thumb product-picker__thumb--empty"
+                                    >
+                                        -
+                                    </span>
+                                    <span class="product-picker__meta">
+                                        <strong>{{ product.name }}</strong>
+                                        <small>
+                                            {{ product.category || "No category" }}
+                                            · {{ product.unit || "-" }}
+                                        </small>
+                                    </span>
+                                    <span class="product-picker__aside">
+                                        <span
+                                            class="product-picker__badge"
+                                            :class="{
+                                                'product-picker__badge--empty':
+                                                    product.available_quantity <=
+                                                    0,
+                                                'product-picker__badge--stock':
+                                                    product.available_quantity >
+                                                    0,
+                                            }"
+                                        >
+                                            {{ product.available_quantity }}
+                                            available
+                                        </span>
+                                        <Check
+                                            v-if="
+                                                String(form.product_id) ===
+                                                String(product.id)
+                                            "
+                                            class="product-picker__check"
+                                        />
+                                    </span>
+                                </button>
+
+                                <p
+                                    v-if="filteredCatalogProducts.length === 0"
+                                    class="product-picker__empty"
+                                >
+                                    No products match “{{ productSearchQuery }}”
+                                </p>
+                            </div>
+                        </div>
+
+                        <p class="form-hint">
+                            Quantity added here is deducted from
+                            <Link href="/main-inventory">Main Inventory</Link>.
+                        </p>
+                    </div>
+
+                    <div class="inventory-landscape__side">
+                    <div
+                        v-if="selectedProduct"
+                        class="inventory-pick"
+                    >
+                        <img
+                            v-if="selectedProduct.image"
+                            :src="selectedProduct.image"
+                            :alt="selectedProduct.name"
+                            class="inventory-pick__image"
+                        />
+                        <div v-else class="inventory-pick__placeholder">
+                            No image
+                        </div>
+                        <div class="inventory-pick__details">
+                            <strong>{{ selectedProduct.name }}</strong>
+                            <p>
+                                Category:
+                                {{ selectedProduct.category || "-" }}
+                            </p>
+                            <p>Unit: {{ selectedProduct.unit || "-" }}</p>
+                            <p>
+                                Price: ₱
+                                {{ formatMoney(selectedProduct.price) }}
+                            </p>
+                            <p>
+                                Available in Main Inventory:
+                                {{ availableMainQuantity }}
+                            </p>
+                            <p v-if="selectedProduct.description">
+                                {{ selectedProduct.description }}
+                            </p>
+                        </div>
+                    </div>
+                    <div v-else class="inventory-pick inventory-pick--empty">
+                        <div class="inventory-pick__placeholder">
+                            No image
+                        </div>
+                        <div class="inventory-pick__details">
+                            <strong>No product selected</strong>
+                            <p>
+                                Search and click a product on the left to see
+                                details.
+                            </p>
+                        </div>
+                    </div>
+
                     <label class="form-field">
                         <span class="form-field__label">Branch</span>
                         <select v-model="form.branch_id" class="input" required>
@@ -716,40 +969,7 @@ onBeforeUnmount(() => {
                             </option>
                         </select>
                     </label>
-                    <label class="form-field">
-                        <span class="form-field__label">
-                            Product (Main Inventory)
-                        </span>
-                        <select
-                            v-model="form.product_id"
-                            class="input"
-                            required
-                            :disabled="catalogProducts.length === 0"
-                        >
-                            <option value="">
-                                {{
-                                    catalogProducts.length === 0
-                                        ? "No products in Main Inventory"
-                                        : "Select a product from Main Inventory"
-                                }}
-                            </option>
-                            <option
-                                v-for="product in catalogProducts"
-                                :key="product.id"
-                                :value="product.id"
-                            >
-                                {{ product.name }}
-                                <template v-if="product.unit">
-                                    ({{ product.unit }})
-                                </template>
-                                — {{ product.available_quantity }} available
-                            </option>
-                        </select>
-                        <p class="form-hint">
-                            Quantity added here is deducted from
-                            <Link href="/main-inventory">Main Inventory</Link>.
-                        </p>
-                    </label>
+
                     <label class="form-field">
                         <span class="form-field__label">Quantity</span>
                         <input
@@ -766,7 +986,7 @@ onBeforeUnmount(() => {
                             {{ availableMainQuantity }}
                         </p>
                     </label>
-                    <div class="form-actions">
+                    <div class="form-actions inventory-landscape__actions">
                         <Button
                             type="submit"
                             :disabled="
@@ -778,6 +998,8 @@ onBeforeUnmount(() => {
                         >
                             {{ isSaving ? "Saving..." : "Save" }}
                         </Button>
+                    </div>
+                    </div>
                     </div>
                 </form>
             </Modal>

@@ -16,6 +16,10 @@ defineProps({
         type: Boolean,
         default: false,
     },
+    fill: {
+        type: Boolean,
+        default: false,
+    },
 });
 
 const emit = defineEmits(["close"]);
@@ -29,14 +33,17 @@ const emit = defineEmits(["close"]);
             @click.self="emit('close')"
         >
             <div
-                class="flex max-h-[min(88vh,860px)] min-h-0 w-full flex-col border-2 border-green-900 bg-white shadow-xl"
-                :class="
+                class="flex min-h-0 w-full flex-col border-2 border-green-900 bg-white shadow-xl"
+                :class="[
                     landscape
                         ? 'max-w-[1040px]'
                         : wide
                           ? 'max-w-[760px]'
-                          : 'max-w-[560px]'
-                "
+                          : 'max-w-[560px]',
+                    fill
+                        ? 'h-[min(88vh,720px)] max-h-[min(88vh,720px)]'
+                        : 'max-h-[min(88vh,860px)]',
+                ]"
             >
                 <header
                     class="flex shrink-0 items-center justify-between bg-green-900 px-4 py-3.5"
@@ -53,7 +60,14 @@ const emit = defineEmits(["close"]);
                         ×
                     </button>
                 </header>
-                <div class="scrollbar-page min-h-0 flex-1 overflow-auto p-4">
+                <div
+                    class="min-h-0 flex-1 p-4"
+                    :class="
+                        fill
+                            ? 'flex flex-col overflow-hidden'
+                            : 'scrollbar-page overflow-auto'
+                    "
+                >
                     <slot />
                 </div>
             </div>

@@ -1,6 +1,7 @@
 <script setup>
 import { computed, onMounted, onUnmounted, ref, watch } from "vue";
 import { Head, useForm } from "@inertiajs/vue3";
+import { Eye, EyeOff } from "lucide-vue-next";
 import lottie from "lottie-web";
 import loaderAnimation from "../../animations/Single Line Web Lottie Animation.json";
 
@@ -23,6 +24,7 @@ const logoUrl =
 
 const isExiting = ref(false);
 const isLoading = ref(false);
+const showPassword = ref(false);
 const exitDurationMs = 600;
 const turnstileContainer = ref(null);
 const loaderContainer = ref(null);
@@ -250,19 +252,42 @@ const submit = () => {
                         }}</small>
                     </label>
 
-                    <label class="form-field">
-                        <span class="form-field__label">Password</span>
-                        <input
-                            v-model="form.password"
-                            class="input"
-                            type="password"
-                            placeholder="Enter password"
-                            required
-                        />
+                    <div class="form-field">
+                        <label class="form-field__label" for="login-password">
+                            Password
+                        </label>
+                        <div class="login-password">
+                            <input
+                                id="login-password"
+                                v-model="form.password"
+                                class="input"
+                                :type="showPassword ? 'text' : 'password'"
+                                placeholder="Enter password"
+                                required
+                                autocomplete="current-password"
+                            />
+                            <button
+                                class="login-password__toggle"
+                                type="button"
+                                :aria-label="
+                                    showPassword
+                                        ? 'Hide password'
+                                        : 'Show password'
+                                "
+                                :aria-pressed="showPassword"
+                                @click="showPassword = !showPassword"
+                            >
+                                <EyeOff
+                                    v-if="showPassword"
+                                    class="login-password__icon"
+                                />
+                                <Eye v-else class="login-password__icon" />
+                            </button>
+                        </div>
                         <small v-if="form.errors.password" class="form-error">{{
                             form.errors.password
                         }}</small>
-                    </label>
+                    </div>
 
                     <div class="turnstile-wrapper">
                         <div

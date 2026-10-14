@@ -1,6 +1,7 @@
 <script setup>
 import { Head, Link, usePage } from "@inertiajs/vue3";
 import {
+    Check,
     ChevronLeft,
     ChevronRight,
     Filter,
@@ -10,7 +11,7 @@ import {
     TriangleAlert,
     Trash2,
 } from "lucide-vue-next";
-import { computed, onMounted, reactive, ref, watch } from "vue";
+import { computed, nextTick, onMounted, reactive, ref, watch } from "vue";
 import { toast } from "vue-sonner";
 import AppLayout from "../components/layout/AppLayout.vue";
 import Button from "../components/ui/Button.vue";
@@ -37,6 +38,8 @@ const showDeleteModal = ref(false);
 const editingId = ref(null);
 const pendingDeleteItem = ref(null);
 const isSaving = ref(false);
+const productSearchQuery = ref("");
+const productSearchInput = ref(null);
 
 const form = reactive({
     product_id: "",
@@ -98,6 +101,12 @@ const availableSetupProducts = computed(() => {
     });
 
     return [...list].sort((a, b) => {
+        const addedCmp = Number(isAlreadyInMain(a)) - Number(isAlreadyInMain(b));
+
+        if (addedCmp !== 0) {
+            return addedCmp;
+        }
+
         const nameCmp = String(a.name || "").localeCompare(
             String(b.name || ""),
         );
@@ -107,6 +116,23 @@ const availableSetupProducts = computed(() => {
         }
 
         return String(a.unit || "").localeCompare(String(b.unit || ""));
+    });
+});
+
+const filteredSetupProducts = computed(() => {
+    const query = productSearchQuery.value.trim().toLowerCase();
+
+    if (!query) {
+        return availableSetupProducts.value;
+    }
+
+    return availableSetupProducts.value.filter((product) => {
+        const haystack = [product.name, product.category, product.unit]
+            .filter(Boolean)
+            .join(" ")
+            .toLowerCase();
+
+        return haystack.includes(query);
     });
 });
 
@@ -201,11 +227,31 @@ const resetForm = () => {
     form.product_id = "";
     form.quantity = "";
     editingId.value = null;
+    productSearchQuery.value = "";
+};
+
+const selectProduct = (product) => {
+    if (isAlreadyInMain(product)) {
+        return;
+    }
+
+    form.product_id = String(product.id);
+};
+
+const selectFirstMatch = () => {
+    const firstAvailable = filteredSetupProducts.value.find(
+        (product) => !isAlreadyInMain(product),
+    );
+
+    if (firstAvailable) {
+        selectProduct(firstAvailable);
+    }
 };
 
 const openCreate = () => {
     resetForm();
     showModal.value = true;
+    nextTick(() => productSearchInput.value?.focus());
 };
 
 const openEdit = (item) => {
@@ -217,6 +263,11 @@ const openEdit = (item) => {
 
 const saveItem = async () => {
     if (isSaving.value) {
+        return;
+    }
+
+    if (!editingId.value && !form.product_id) {
+        toast.error("Select a product first.");
         return;
     }
 
@@ -280,6 +331,18 @@ const confirmDelete = async () => {
 
 watch([searchQuery, statusFilter], () => {
     currentPage.value = 1;
+});
+
+watch([() => form.product_id, filteredSetupProducts], () => {
+    if (!form.product_id) {
+        return;
+    }
+
+    nextTick(() => {
+        document
+            .querySelector(".product-picker__item--selected")
+            ?.scrollIntoView({ block: "nearest" });
+    });
 });
 
 watch(totalPages, (pages) => {
@@ -484,51 +547,129 @@ onMounted(loadData);
                         ? 'Edit Main Inventory'
                         : 'Add to Main Inventory'
                 "
+                landscape
                 @close="showModal = false"
             >
-                <form class="form-grid" @submit.prevent="saveItem">
-                    <label class="form-field">
+                <form class="inventory-landscape" @submit.prevent="saveItem">
+                    <div class="inventory-landscape__body">
+                    <div class="form-field product-picker-field">
                         <span class="form-field__label">
                             Product (Products Setup)
                         </span>
-                        <select
-                            v-model="form.product_id"
-                            class="input"
-                            required
-                            :disabled="
-                                Boolean(editingId) ||
-                                availableSetupProducts.length === 0
-                            "
+
+                        <div
+                            v-if="editingId"
+                            class="product-picker__locked"
                         >
-                            <option value="">
-                                {{
-                                    availableSetupProducts.length === 0 &&
-                                    !editingId
-                                        ? "No products available from Products Setup"
-                                        : "Select a product"
-                                }}
-                            </option>
-                            <option
-                                v-for="product in availableSetupProducts"
-                                :key="product.id"
-                                :value="String(product.id)"
-                                :disabled="isAlreadyInMain(product)"
+                            {{ selectedProduct?.name || "-" }}
+                            ({{ selectedProduct?.unit || "-" }})
+                        </div>
+
+                        <div v-else class="product-picker">
+                            <label class="product-picker__search">
+                                <Search class="products-control-icon" />
+                                <input
+                                    ref="productSearchInput"
+                                    v-model="productSearchQuery"
+                                    class="input"
+                                    type="text"
+                                    placeholder="Search product by name, category, or unit"
+                                    autocomplete="off"
+                                    :disabled="
+                                        availableSetupProducts.length === 0
+                                    "
+                                    @keydown.enter.prevent="selectFirstMatch"
+                                />
+                            </label>
+
+                            <p
+                                v-if="availableSetupProducts.length === 0"
+                                class="product-picker__empty"
                             >
-                                {{ product.name }}
-                                ({{ product.unit || "-" }})
-                                <template v-if="isAlreadyInMain(product)">
-                                    — already added
-                                </template>
-                            </option>
-                        </select>
+                                No products available from Products Setup
+                            </p>
+
+                            <div
+                                v-else
+                                class="product-picker__list"
+                                role="listbox"
+                                aria-label="Products from Products Setup"
+                            >
+                                <button
+                                    v-for="product in filteredSetupProducts"
+                                    :key="product.id"
+                                    type="button"
+                                    class="product-picker__item"
+                                    :class="{
+                                        'product-picker__item--selected':
+                                            String(form.product_id) ===
+                                            String(product.id),
+                                        'product-picker__item--added':
+                                            isAlreadyInMain(product),
+                                    }"
+                                    role="option"
+                                    :aria-selected="
+                                        String(form.product_id) ===
+                                        String(product.id)
+                                    "
+                                    :disabled="isAlreadyInMain(product)"
+                                    @click="selectProduct(product)"
+                                >
+                                    <img
+                                        v-if="product.image"
+                                        :src="product.image"
+                                        :alt="product.name"
+                                        class="product-picker__thumb"
+                                    />
+                                    <span
+                                        v-else
+                                        class="product-picker__thumb product-picker__thumb--empty"
+                                    >
+                                        -
+                                    </span>
+                                    <span class="product-picker__meta">
+                                        <strong>{{ product.name }}</strong>
+                                        <small>
+                                            {{ product.category || "No category" }}
+                                            · {{ product.unit || "-" }}
+                                        </small>
+                                    </span>
+                                    <span
+                                        v-if="isAlreadyInMain(product)"
+                                        class="product-picker__badge"
+                                    >
+                                        Already added
+                                    </span>
+                                    <Check
+                                        v-else-if="
+                                            String(form.product_id) ===
+                                            String(product.id)
+                                        "
+                                        class="product-picker__check"
+                                    />
+                                </button>
+
+                                <p
+                                    v-if="filteredSetupProducts.length === 0"
+                                    class="product-picker__empty"
+                                >
+                                    No products match “{{ productSearchQuery }}”
+                                </p>
+                            </div>
+                        </div>
+
                         <p v-if="!editingId" class="form-hint">
                             Create the product in
                             <Link href="/products">Products Setup</Link>
                             first, then add it here and set the quantity.
                         </p>
-                    </label>
+                    </div>
 
-                    <div v-if="selectedProduct" class="inventory-pick">
+                    <div class="inventory-landscape__side">
+                    <div
+                        v-if="selectedProduct"
+                        class="inventory-pick"
+                    >
                         <img
                             v-if="selectedProduct.image"
                             :src="selectedProduct.image"
@@ -554,6 +695,18 @@ onMounted(loadData);
                             </p>
                         </div>
                     </div>
+                    <div v-else class="inventory-pick inventory-pick--empty">
+                        <div class="inventory-pick__placeholder">
+                            No image
+                        </div>
+                        <div class="inventory-pick__details">
+                            <strong>No product selected</strong>
+                            <p>
+                                Search and click a product on the left to see
+                                details.
+                            </p>
+                        </div>
+                    </div>
 
                     <Input
                         v-model="form.quantity"
@@ -562,7 +715,7 @@ onMounted(loadData);
                         placeholder="0"
                     />
 
-                    <div class="form-actions">
+                    <div class="form-actions inventory-landscape__actions">
                         <Button
                             type="submit"
                             :disabled="
@@ -573,6 +726,8 @@ onMounted(loadData);
                         >
                             {{ isSaving ? "Saving..." : "Save" }}
                         </Button>
+                    </div>
+                    </div>
                     </div>
                 </form>
             </Modal>
