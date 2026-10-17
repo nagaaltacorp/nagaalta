@@ -9,6 +9,57 @@ use Illuminate\Http\Exceptions\HttpResponseException;
 
 class BranchInventoryStock
 {
+    public static function takeFromBranch(int $branchId, Product $product, float $quantity, ?string $unitType): void
+    {
+        $quantity = SaleQuantity::round($quantity);
+        $batches = Inventory::query()
+            ->where('branch_id', $branchId)
+            ->where('product_id', $product->id)
+            ->orderBy('id')
+            ->lockForUpdate()
+            ->get();
+
+        if ($batches->isEmpty()) {
+            if ($product->saleUsesRetailConversion($unitType)) {
+                throw new HttpResponseException(response()->json([
+                    'message' => 'No branch inventory found for this product.',
+                ], 422));
+            }
+
+            return;
+        }
+
+        $remaining = $quantity;
+
+        foreach ($batches as $batch) {
+            if ($remaining <= 0.00005) {
+                break;
+            }
+
+            $available = $product->saleUsesRetailConversion($unitType)
+                ? $product->availableRetailQuantity(
+                    (int) $batch->quantity,
+                    (float) ($batch->retail_remainder ?? 0),
+                )
+                : (float) max(0, (int) $batch->quantity);
+
+            $take = SaleQuantity::round(min($remaining, $available));
+
+            if ($take <= 0.00005) {
+                continue;
+            }
+
+            self::decrement($batch, $product, $take, $unitType);
+            $remaining = SaleQuantity::round($remaining - $take);
+        }
+
+        if ($remaining > 0.00005) {
+            throw new HttpResponseException(response()->json([
+                'message' => 'Not enough branch inventory for this product.',
+            ], 422));
+        }
+    }
+
     public static function decrement(Inventory $inventory, Product $product, float $quantity, ?string $unitType): void
     {
         $quantity = SaleQuantity::round($quantity);

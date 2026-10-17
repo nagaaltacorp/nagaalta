@@ -3,10 +3,12 @@
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
+use App\Models\Employee;
 use App\Models\Inventory;
 use App\Models\Product;
 use App\Models\Sale;
 use App\Models\User;
+use App\Services\BranchInventoryStock;
 use App\Services\CartDiscount;
 use App\Services\DailySalesReportService;
 use App\Services\ManagerBranchScope;
@@ -231,11 +233,17 @@ class SaleController extends Controller
 
     private function validateSalePayload(Request $request): array
     {
+        if (! $request->filled('branch_id') && $request->filled('branch.id')) {
+            $request->merge(['branch_id' => $request->input('branch.id')]);
+        }
+
         $validated = $request->validate([
             'product_id' => ['required', 'exists:products,id'],
             'quantity' => ['required'],
             'processed_by_user_id' => ['nullable', 'exists:users,id'],
             'user_id' => ['nullable', 'exists:users,id'],
+            'employee_id' => ['nullable', 'integer', 'exists:employees,id'],
+            'branch_id' => ['nullable', 'integer', 'exists:branches,id'],
             'unit_type' => ['nullable', 'string', 'max:50'],
             'mode' => ['nullable', 'string', 'max:20'],
             'discount_percent' => ['nullable', 'numeric', 'min:0', 'max:100'],
@@ -306,6 +314,12 @@ class SaleController extends Controller
     {
         $processedByUserId = $request->user()?->id
             ?? ($validated['processed_by_user_id'] ?? $validated['user_id'] ?? null);
+
+        if ($processedByUserId === null && ! empty($validated['employee_id'])) {
+            $processedByUserId = User::query()
+                ->where('employee_id', (int) $validated['employee_id'])
+                ->value('id');
+        }
         $idempotencyKey = isset($validated['idempotency_key'])
             ? trim((string) $validated['idempotency_key'])
             : null;
@@ -429,14 +443,20 @@ class SaleController extends Controller
         }
 
         try {
-            $sale = DB::transaction(function () use ($attributes, $processedByUserId, $request) {
+            $sale = DB::transaction(function () use ($attributes, $processedByUserId, $request, $validated) {
                 $sale = Sale::create($attributes)->load([
                     'product',
                     'processedBy:id,name,user_name,email',
                 ]);
 
                 $sale = $this->ensureSaleNumber($sale);
-                $this->decrementInventoryForSale($sale, $processedByUserId, $request->user());
+                $this->decrementInventoryForSale(
+                    $sale,
+                    $processedByUserId,
+                    $request->user(),
+                    isset($validated['branch_id']) ? (int) $validated['branch_id'] : null,
+                    isset($validated['employee_id']) ? (int) $validated['employee_id'] : null,
+                );
 
                 return $sale;
             });
@@ -467,98 +487,63 @@ class SaleController extends Controller
         return in_array($sqlState, ['23000', '23505'], true);
     }
 
-    private function decrementInventoryForSale(Sale $sale, ?int $processedByUserId, ?User $requestUser): void
-    {
-        if ($processedByUserId === null && $requestUser === null) {
-            return;
-        }
-
-        $branchId = $this->resolveSaleBranchId($processedByUserId, $requestUser);
-
-        if ($branchId === null) {
-            return;
-        }
-
+    private function decrementInventoryForSale(
+        Sale $sale,
+        ?int $processedByUserId,
+        ?User $requestUser,
+        ?int $requestedBranchId = null,
+        ?int $employeeId = null,
+    ): void {
         $sale->loadMissing('product');
-
-        $inventory = Inventory::query()
-            ->where('branch_id', $branchId)
-            ->where('product_id', $sale->product_id)
-            ->orderByDesc('id')
-            ->lockForUpdate()
-            ->first();
-
-        if (!$inventory) {
-            if ($sale->product?->saleUsesRetailConversion($sale->unit_type)) {
-                throw new HttpResponseException(response()->json([
-                    'message' => 'No branch inventory found for this product.',
-                ], 422));
-            }
-
-            return;
-        }
-
         $product = $sale->product ?? Product::find($sale->product_id);
 
-        if ($product && $product->saleUsesRetailConversion($sale->unit_type)) {
-            $this->decrementRetailInventory($inventory, $product, (float) $sale->quantity);
-
+        if (! $product) {
             return;
         }
 
-        $newQty = max(0, (int) $inventory->quantity - (int) round((float) $sale->quantity));
-        $remainder = (float) ($inventory->retail_remainder ?? 0);
+        $branchId = $this->resolveSaleBranchId(
+            $processedByUserId,
+            $requestUser,
+            $requestedBranchId,
+            $employeeId,
+        ) ?? $this->inferProductBranchId((int) $sale->product_id);
 
-        $inventory->update([
-            'quantity' => $newQty,
-            'status' => $newQty === 0 && SaleQuantity::isZero($remainder) ? 'out_of_stock' : 'in_stock',
-        ]);
-    }
+        if ($branchId === null) {
+            $hasBranchStock = Inventory::query()
+                ->where('product_id', $sale->product_id)
+                ->whereNotNull('branch_id')
+                ->exists();
 
-    private function decrementRetailInventory(Inventory $inventory, Product $product, float $qtyToSell): void
-    {
-        $kgPerUnit = (int) $product->retail_qty_per_unit;
-        $retailUnit = $product->retail_unit ?: 'kg';
-        $qtyToSell = SaleQuantity::round($qtyToSell);
+            if (! $hasBranchStock) {
+                return;
+            }
 
-        if ($kgPerUnit <= 0) {
             throw new HttpResponseException(response()->json([
-                'message' => 'This product is missing retail quantity per wholesale unit in Retail Setup.',
+                'message' => 'Cannot deduct branch inventory because this sale has no branch. Send branch_id or user_id.',
             ], 422));
         }
 
-        $sacks = (int) $inventory->quantity;
-        $remainder = SaleQuantity::round((float) ($inventory->retail_remainder ?? 0));
-        $available = $product->availableRetailQuantity($sacks, $remainder);
-
-        if ($qtyToSell > $available + 0.00005) {
-            throw new HttpResponseException(response()->json([
-                'message' => 'Not enough retail stock after allowed display loss. Available to sell: '.SaleQuantity::display($available)." {$retailUnit}.",
-            ], 422));
-        }
-
-        $fromRemainder = min($remainder, $qtyToSell);
-        $remainder = SaleQuantity::round($remainder - $fromRemainder);
-        $stillNeeded = SaleQuantity::round($qtyToSell - $fromRemainder);
-
-        if ($stillNeeded > 0.00005) {
-            $unitsToOpen = (int) ceil($stillNeeded / $kgPerUnit - 0.0000001);
-            $sacks -= $unitsToOpen;
-            $remainder = SaleQuantity::round(($unitsToOpen * $kgPerUnit) - $stillNeeded + $remainder);
-        }
-
-        $inventory->update([
-            'quantity' => $sacks,
-            'retail_remainder' => max(0, $remainder),
-            'status' => $sacks === 0 && SaleQuantity::isZero($remainder) ? 'out_of_stock' : 'in_stock',
-        ]);
+        BranchInventoryStock::takeFromBranch(
+            $branchId,
+            $product,
+            (float) $sale->quantity,
+            $sale->unit_type,
+        );
     }
 
-    private function resolveSaleBranchId(?int $processedByUserId, ?User $requestUser): ?int
-    {
+    private function resolveSaleBranchId(
+        ?int $processedByUserId,
+        ?User $requestUser,
+        ?int $requestedBranchId = null,
+        ?int $employeeId = null,
+    ): ?int {
+        if ($requestedBranchId) {
+            return $requestedBranchId;
+        }
+
         $resolvedUser = $requestUser;
 
-        if ($processedByUserId !== null && (!$resolvedUser || $resolvedUser->id !== $processedByUserId)) {
+        if ($processedByUserId !== null && (! $resolvedUser || $resolvedUser->id !== $processedByUserId)) {
             $resolvedUser = User::with([
                 'employee:id,branch_id',
                 'managedBranch:id',
@@ -570,8 +555,38 @@ class SaleController extends Controller
             ]);
         }
 
-        return $resolvedUser?->employee?->branch_id
+        $fromUser = $resolvedUser?->employee?->branch_id
             ?? $resolvedUser?->managedBranch?->id;
+
+        if ($fromUser) {
+            return (int) $fromUser;
+        }
+
+        if ($employeeId) {
+            $fromEmployee = Employee::query()->whereKey($employeeId)->value('branch_id');
+
+            if ($fromEmployee) {
+                return (int) $fromEmployee;
+            }
+        }
+
+        return null;
+    }
+
+    private function inferProductBranchId(int $productId): ?int
+    {
+        $ids = Inventory::query()
+            ->where('product_id', $productId)
+            ->whereNotNull('branch_id')
+            ->where(function ($query) {
+                $query
+                    ->where('quantity', '>', 0)
+                    ->orWhere('retail_remainder', '>', 0);
+            })
+            ->distinct()
+            ->pluck('branch_id');
+
+        return $ids->count() === 1 ? (int) $ids->first() : null;
     }
 
     private function unitTypeForSale(Product $product, ?string $requestedUnit, string $mode): ?string
