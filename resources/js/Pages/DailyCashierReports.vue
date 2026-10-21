@@ -1,13 +1,15 @@
 <script setup>
 import { Head } from "@inertiajs/vue3";
 import { Download, Eye } from "lucide-vue-next";
-import { computed, onMounted, ref } from "vue";
+import { computed, onMounted, onUnmounted, ref } from "vue";
 import { toast } from "vue-sonner";
 import AppLayout from "../components/layout/AppLayout.vue";
 import Button from "../components/ui/Button.vue";
 import Modal from "../components/ui/Modal.vue";
 import Table from "../components/ui/Table.vue";
 import api from "../services/api";
+
+const POLL_INTERVAL_MS = 10000;
 
 const reports = ref([]);
 const branches = ref([]);
@@ -18,6 +20,8 @@ const showView = ref(false);
 const viewing = ref(null);
 const viewItemQuery = ref("");
 const downloadingId = ref(null);
+let pollTimerId = null;
+let isRefreshing = false;
 
 const formatMoney = (value) =>
     Number(value || 0).toLocaleString(undefined, {
@@ -52,28 +56,68 @@ const formatDay = (value) => {
 };
 
 const loadReports = async () => {
-    const params = {};
-
-    if (branchFilter.value !== "all") {
-        params.branch_id = branchFilter.value;
+    if (isRefreshing) {
+        return;
     }
 
-    if (dateFilter.value) {
-        params.date = dateFilter.value;
+    isRefreshing = true;
+
+    try {
+        const params = {};
+
+        if (branchFilter.value !== "all") {
+            params.branch_id = branchFilter.value;
+        }
+
+        if (dateFilter.value) {
+            params.date = dateFilter.value;
+        }
+
+        if (searchQuery.value.trim()) {
+            params.search = searchQuery.value.trim();
+        }
+
+        const [{ data: reportPayload }, { data: branchPayload }] =
+            await Promise.all([
+                api.get("/daily-sales-reports", { params }),
+                api.get("/branches"),
+            ]);
+
+        reports.value = reportPayload.data ?? [];
+        branches.value = branchPayload.data ?? [];
+
+        if (showView.value && viewing.value?.id) {
+            const { data } = await api.get(
+                `/daily-sales-reports/${viewing.value.id}`,
+            );
+            viewing.value = data.data;
+        }
+    } finally {
+        isRefreshing = false;
     }
+};
 
-    if (searchQuery.value.trim()) {
-        params.search = searchQuery.value.trim();
+const stopPolling = () => {
+    if (pollTimerId !== null) {
+        window.clearInterval(pollTimerId);
+        pollTimerId = null;
     }
+};
 
-    const [{ data: reportPayload }, { data: branchPayload }] =
-        await Promise.all([
-            api.get("/daily-sales-reports", { params }),
-            api.get("/branches"),
-        ]);
+const startPolling = () => {
+    stopPolling();
 
-    reports.value = reportPayload.data ?? [];
-    branches.value = branchPayload.data ?? [];
+    pollTimerId = window.setInterval(() => {
+        if (document.visibilityState === "visible") {
+            loadReports();
+        }
+    }, POLL_INTERVAL_MS);
+};
+
+const handleVisibilityChange = () => {
+    if (document.visibilityState === "visible") {
+        loadReports();
+    }
 };
 
 const filteredViewItems = computed(() => {
@@ -141,7 +185,16 @@ const resetFilters = () => {
     loadReports();
 };
 
-onMounted(loadReports);
+onMounted(() => {
+    loadReports();
+    startPolling();
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+});
+
+onUnmounted(() => {
+    stopPolling();
+    document.removeEventListener("visibilitychange", handleVisibilityChange);
+});
 </script>
 
 <template>
