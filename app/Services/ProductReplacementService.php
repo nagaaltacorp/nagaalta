@@ -2,6 +2,7 @@
 
 namespace App\Services;
 
+use App\Models\Branch;
 use App\Models\Inventory;
 use App\Models\Product;
 use App\Models\ProductReplacement;
@@ -53,13 +54,7 @@ class ProductReplacementService
         }
 
         if ($branchId !== null) {
-            $receiptBranchId = self::branchIdFromSale($sales->first());
-
-            if ($receiptBranchId !== null && $receiptBranchId !== $branchId) {
-                throw new HttpResponseException(response()->json([
-                    'message' => 'This receipt was not sold at this branch.',
-                ], 422));
-            }
+            $sales = self::salesForBranch($sales, $branchId);
         }
 
         $roots = $sales->whereNull('replaces_sale_id')->values();
@@ -335,10 +330,10 @@ class ProductReplacementService
             }
         }
 
-        if ($branchId !== null) {
-            $receiptBranchId = self::branchIdFromSale($sale);
+        if ($branchId !== null && !self::saleMatchesBranch($sale, $branchId)) {
+            $knownBranches = self::knownBranchIds($sale);
 
-            if ($receiptBranchId !== null && $receiptBranchId !== $branchId) {
+            if ($knownBranches !== [] && !in_array($branchId, $knownBranches, true)) {
                 throw new HttpResponseException(response()->json([
                     'message' => 'This receipt was not sold at this branch.',
                 ], 422));
@@ -461,15 +456,121 @@ class ProductReplacementService
         return $inventory;
     }
 
+    private static function salesForBranch(Collection $sales, int $branchId): Collection
+    {
+        $matched = $sales
+            ->filter(fn (Sale $sale) => self::saleMatchesBranch($sale, $branchId))
+            ->values();
+
+        if ($matched->isNotEmpty()) {
+            return $matched;
+        }
+
+        $soldAtAnotherBranch = $sales->contains(function (Sale $sale) use ($branchId) {
+            $branches = self::knownBranchIds($sale);
+
+            return $branches !== [] && !in_array($branchId, $branches, true);
+        });
+
+        if ($soldAtAnotherBranch) {
+            throw new HttpResponseException(response()->json([
+                'message' => 'This receipt was not sold at this branch.',
+            ], 422));
+        }
+
+        return $sales;
+    }
+
+    private static function saleMatchesBranch(Sale $sale, int $branchId): bool
+    {
+        $branches = self::knownBranchIds($sale);
+
+        if (in_array($branchId, $branches, true)) {
+            return true;
+        }
+
+        if (self::storedBranchId($sale) !== null || $branches === []) {
+            return false;
+        }
+
+        return self::stockedOnlyAt($sale, $branchId, $branches);
+    }
+
+    /**
+     * @return array<int>
+     */
+    private static function knownBranchIds(Sale $sale): array
+    {
+        $storedBranchId = self::storedBranchId($sale);
+
+        if ($storedBranchId !== null) {
+            return [$storedBranchId];
+        }
+
+        return self::processorBranchIds($sale);
+    }
+
+    private static function storedBranchId(Sale $sale): ?int
+    {
+        if (!array_key_exists('branch_id', $sale->getAttributes())) {
+            return null;
+        }
+
+        $branchId = $sale->getAttributes()['branch_id'];
+
+        return $branchId ? (int) $branchId : null;
+    }
+
+    /**
+     * @return array<int>
+     */
+    private static function processorBranchIds(Sale $sale): array
+    {
+        $sale->loadMissing('processedBy.employee:id,branch_id');
+
+        $branchIds = [];
+        $employeeBranchId = $sale->processedBy?->employee?->branch_id;
+
+        if ($employeeBranchId) {
+            $branchIds[] = (int) $employeeBranchId;
+        }
+
+        if ($sale->processed_by_user_id) {
+            $managedBranchIds = Branch::query()
+                ->where('manager_user_id', $sale->processed_by_user_id)
+                ->pluck('id');
+
+            foreach ($managedBranchIds as $managedBranchId) {
+                $branchIds[] = (int) $managedBranchId;
+            }
+        }
+
+        return array_values(array_unique($branchIds));
+    }
+
+    /**
+     * @param  array<int>  $otherBranchIds
+     */
+    private static function stockedOnlyAt(Sale $sale, int $branchId, array $otherBranchIds): bool
+    {
+        $stockedHere = Inventory::query()
+            ->where('branch_id', $branchId)
+            ->where('product_id', $sale->product_id)
+            ->exists();
+
+        if (!$stockedHere) {
+            return false;
+        }
+
+        return !Inventory::query()
+            ->whereIn('branch_id', $otherBranchIds)
+            ->where('product_id', $sale->product_id)
+            ->exists();
+    }
+
     private static function branchIdFromSale(Sale $sale): ?int
     {
-        $sale->loadMissing([
-            'processedBy.employee:id,branch_id',
-            'processedBy.managedBranch:id',
-        ]);
-
-        return $sale->processedBy?->employee?->branch_id
-            ?? $sale->processedBy?->managedBranch?->id;
+        return self::knownBranchIds($sale)[0] ?? null;
     }
 
     private static function normalizeSaleNumber(string $saleNumber): string

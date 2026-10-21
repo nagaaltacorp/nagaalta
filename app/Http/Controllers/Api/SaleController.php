@@ -403,6 +403,13 @@ class SaleController extends Controller
             }
         }
 
+        $saleBranchId = $this->resolveSaleBranchId(
+            $processedByUserId,
+            $request->user(),
+            isset($validated['branch_id']) ? (int) $validated['branch_id'] : null,
+            isset($validated['employee_id']) ? (int) $validated['employee_id'] : null,
+        ) ?? $this->inferProductBranchId((int) $product->id);
+
         $attributes = [
             'product_id' => $product->id,
             'processed_by_user_id' => $processedByUserId,
@@ -418,6 +425,10 @@ class SaleController extends Controller
             'borrower_name' => $paymentMethod === 'utang' ? $validated['borrower_name'] : null,
             'due_date' => $paymentMethod === 'utang' ? $validated['due_date'] : null,
         ];
+
+        if (Schema::hasColumn('sales', 'branch_id') && $saleBranchId) {
+            $attributes['branch_id'] = $saleBranchId;
+        }
 
         if (Schema::hasColumn('sales', 'borrower_phone')) {
             $attributes['borrower_phone'] = $paymentMethod === 'utang'
@@ -443,7 +454,7 @@ class SaleController extends Controller
         }
 
         try {
-            $sale = DB::transaction(function () use ($attributes, $processedByUserId, $request, $validated) {
+            $sale = DB::transaction(function () use ($attributes, $processedByUserId, $request, $validated, $saleBranchId) {
                 $sale = Sale::create($attributes)->load([
                     'product',
                     'processedBy:id,name,user_name,email',
@@ -454,7 +465,7 @@ class SaleController extends Controller
                     $sale,
                     $processedByUserId,
                     $request->user(),
-                    isset($validated['branch_id']) ? (int) $validated['branch_id'] : null,
+                    $saleBranchId,
                     isset($validated['employee_id']) ? (int) $validated['employee_id'] : null,
                 );
 

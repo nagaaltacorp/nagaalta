@@ -13,6 +13,7 @@ class Sale extends Model
         'sale_number',
         'idempotency_key',
         'product_id',
+        'branch_id',
         'processed_by_user_id',
         'unit_type',
         'quantity',
@@ -179,6 +180,11 @@ class Sale extends Model
     public function product(): BelongsTo
     {
         return $this->belongsTo(Product::class);
+    }
+
+    public function branch(): BelongsTo
+    {
+        return $this->belongsTo(Branch::class);
     }
 
     public function processedBy(): BelongsTo
