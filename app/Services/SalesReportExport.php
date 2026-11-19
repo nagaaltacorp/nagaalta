@@ -131,7 +131,7 @@ class SalesReportExport
         $notes = [];
 
         if ($payment === 'utang') {
-            $notes[] = $sale->paid_at ? 'Utang paid' : 'Utang';
+            $notes[] = $sale->paid_at ? 'Credit paid' : 'Credit';
         }
 
         if ($sale->is_replacement) {
@@ -161,7 +161,7 @@ class SalesReportExport
             'quantity' => (string) $sale->quantity_display,
             'vat' => $vat,
             'discount' => $discount,
-            'payment' => $payment === 'utang' ? 'Utang' : ucfirst($payment),
+            'payment' => $payment === 'utang' ? 'Credit' : ucfirst($payment),
             'note' => $notes === [] ? '' : implode(', ', $notes),
             'processed_by' => $sale->processedBy?->name
                 ?: $sale->processedBy?->user_name
@@ -198,7 +198,7 @@ class SalesReportExport
         }
 
         if ($payment === 'utang') {
-            $parts[] = 'Utang paid';
+            $parts[] = 'Credit paid';
         } elseif ($payment === 'cash') {
             $parts[] = 'Cash and other';
         }

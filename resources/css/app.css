@@ -79,9 +79,50 @@
         @apply grid min-w-0 content-start items-stretch gap-4;
     }
 
-    .dashboard-surface-card {
-        @apply border border-gray-300 bg-white p-4;
-    }
+.dashboard-surface-card {
+    @apply border border-gray-300 bg-white p-4;
+}
+
+.settings-page {
+    display: grid;
+    gap: 1rem;
+}
+
+.settings-note {
+    margin: 0 0 0.9rem;
+    color: #475569;
+    font-size: 0.92rem;
+}
+
+.settings-category-add {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: end;
+    gap: 0.75rem;
+}
+
+.settings-category-add .form-field {
+    flex: 1 1 220px;
+}
+
+.settings-category-list {
+    display: grid;
+    gap: 0.5rem;
+    margin: 1rem 0 0;
+    padding: 0;
+    list-style: none;
+}
+
+.settings-category-list__item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.75rem;
+    border: 1px solid #e2e8f0;
+    padding: 0.55rem 0.75rem;
+    font-weight: 650;
+    color: #14532d;
+}
 
     .vat-summary {
         @apply grid content-start items-start grid-cols-1 gap-4 sm:grid-cols-3;
@@ -2780,6 +2821,10 @@
     background: #f4f4f5;
     border-color: #a1a1aa;
     color: #52525b;
+}
+
+.credit-customer-row--selected td {
+    background: #dcfce7;
 }
 
 .utang-phone,

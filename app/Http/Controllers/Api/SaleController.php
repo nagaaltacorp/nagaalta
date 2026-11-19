@@ -8,7 +8,9 @@ use App\Models\Inventory;
 use App\Models\Product;
 use App\Models\Sale;
 use App\Models\User;
+use App\Models\Creditor;
 use App\Services\BranchInventoryStock;
+use App\Services\CreditorDirectory;
 use App\Services\CartDiscount;
 use App\Services\DailySalesReportService;
 use App\Services\ManagerBranchScope;
@@ -252,6 +254,7 @@ class SaleController extends Controller
             'sale_number' => ['nullable', 'string', 'max:32'],
             'idempotency_key' => ['nullable', 'string', 'max:100'],
             'payment_method' => ['nullable', 'string', 'max:20'],
+            'creditor_id' => ['nullable', 'integer', 'exists:creditors,id'],
             'borrower_name' => ['nullable', 'string', 'max:150'],
             'due_date' => ['nullable', 'date'],
             'processed_at_utc' => ['nullable', 'date'],
@@ -273,38 +276,61 @@ class SaleController extends Controller
         $validated['payment_method'] = $this->normalizePaymentMethod($validated['payment_method'] ?? null);
 
         if ($validated['payment_method'] === 'utang') {
-            $borrowerName = trim((string) ($validated['borrower_name'] ?? ''));
+            $creditor = $this->selectedCreditor($validated['creditor_id'] ?? null);
             $dueDate = trim((string) ($validated['due_date'] ?? ''));
-
-            if ($borrowerName === '') {
-                throw ValidationException::withMessages([
-                    'borrower_name' => 'Enter the name of the person who will pay this utang.',
-                ]);
-            }
 
             if ($dueDate === '') {
                 throw ValidationException::withMessages([
-                    'due_date' => 'Enter the date this utang is due.',
+                    'due_date' => 'Enter the date this credit is due.',
                 ]);
             }
 
-            $validated['borrower_name'] = $borrowerName;
             $validated['due_date'] = Carbon::parse($dueDate)->toDateString();
-            $validated['borrower_phone'] = $this->resolveBorrowerPhone($request);
-            $validated['valid_id_bytes'] = $this->validIdBytes($request);
+            $validated['saved_valid_id_path'] = null;
 
-            if (
-                $validated['borrower_phone'] === null
-                && $validated['valid_id_bytes'] === null
-                && $this->salesHaveUtangProofColumns()
-            ) {
-                throw ValidationException::withMessages([
-                    'borrower_phone' => 'Enter a phone number or attach a valid ID for this utang.',
-                ]);
+            if ($creditor) {
+                $validated['creditor_id'] = $creditor->id;
+                $validated['borrower_name'] = $creditor->name;
+                $validated['borrower_phone'] = $creditor->phone;
+                $validated['valid_id_bytes'] = null;
+                $validated['saved_valid_id_path'] = $creditor->valid_id_path;
+
+                if (
+                    $validated['borrower_phone'] === null
+                    && $validated['saved_valid_id_path'] === null
+                    && $this->salesHaveUtangProofColumns()
+                ) {
+                    throw ValidationException::withMessages([
+                        'creditor_id' => 'This customer has no phone number or valid ID on file.',
+                    ]);
+                }
+            } else {
+                $borrowerName = trim((string) ($validated['borrower_name'] ?? ''));
+
+                if ($borrowerName === '') {
+                    throw ValidationException::withMessages([
+                        'borrower_name' => 'Enter the name of the person who will pay this credit.',
+                    ]);
+                }
+
+                $validated['borrower_name'] = $borrowerName;
+                $validated['borrower_phone'] = $this->resolveBorrowerPhone($request);
+                $validated['valid_id_bytes'] = $this->validIdBytes($request);
+
+                if (
+                    $validated['borrower_phone'] === null
+                    && $validated['valid_id_bytes'] === null
+                    && $this->salesHaveUtangProofColumns()
+                ) {
+                    throw ValidationException::withMessages([
+                        'borrower_phone' => 'Enter a phone number or attach a valid ID for this credit.',
+                    ]);
+                }
             }
         } else {
             $validated['borrower_phone'] = null;
             $validated['valid_id_bytes'] = null;
+            $validated['saved_valid_id_path'] = null;
         }
 
         return $validated;
@@ -401,6 +427,10 @@ class SaleController extends Controller
             if ($validIdPath === null && is_string($validIdBytes) && $validIdBytes !== '') {
                 $validIdPath = $this->storeValidId($validIdBytes, $ticketSaleNumber);
             }
+
+            if ($validIdPath === null && !empty($validated['saved_valid_id_path'])) {
+                $validIdPath = $validated['saved_valid_id_path'];
+            }
         }
 
         $saleBranchId = $this->resolveSaleBranchId(
@@ -454,7 +484,29 @@ class SaleController extends Controller
         }
 
         try {
-            $sale = DB::transaction(function () use ($attributes, $processedByUserId, $request, $validated, $saleBranchId) {
+            $sale = DB::transaction(function () use ($attributes, $processedByUserId, $request, $validated, $saleBranchId, $paymentMethod, $canStoreValidId) {
+                if ($paymentMethod === 'utang' && Schema::hasTable('creditors')) {
+                    $creditor = CreditorDirectory::remember(
+                        isset($validated['creditor_id']) ? (int) $validated['creditor_id'] : null,
+                        (string) ($attributes['borrower_name'] ?? ''),
+                        $attributes['borrower_phone'] ?? null,
+                        $attributes['valid_id_path'] ?? null,
+                    );
+                    $attributes['borrower_name'] = $creditor->name;
+
+                    if (Schema::hasColumn('sales', 'creditor_id')) {
+                        $attributes['creditor_id'] = $creditor->id;
+                    }
+
+                    if (Schema::hasColumn('sales', 'borrower_phone')) {
+                        $attributes['borrower_phone'] = $creditor->phone;
+                    }
+
+                    if ($canStoreValidId && empty($attributes['valid_id_path']) && $creditor->valid_id_path) {
+                        $attributes['valid_id_path'] = $creditor->valid_id_path;
+                    }
+                }
+
                 $sale = Sale::create($attributes)->load([
                     'product',
                     'processedBy:id,name,user_name,email',
@@ -683,7 +735,7 @@ class SaleController extends Controller
 
         if ($existingMethod !== $paymentMethod) {
             throw ValidationException::withMessages([
-                'payment_method' => 'Use the same payment for every item on this receipt. Do not mix utang with cash.',
+                'payment_method' => 'Use the same payment for every item on this receipt. Do not mix credit with cash.',
             ]);
         }
 
@@ -702,7 +754,7 @@ class SaleController extends Controller
             || $existingPhone !== $incomingPhone
         ) {
             throw ValidationException::withMessages([
-                'borrower_name' => 'Use the same borrower name, phone, and due date on every item in this utang.',
+                'borrower_name' => 'Use the same borrower name, phone, and due date on every item in this credit.',
             ]);
         }
     }
@@ -728,6 +780,15 @@ class SaleController extends Controller
         }
 
         return $phone;
+    }
+
+    private function selectedCreditor(mixed $creditorId): ?Creditor
+    {
+        if ($creditorId === null || $creditorId === '' || !Schema::hasTable('creditors')) {
+            return null;
+        }
+
+        return Creditor::query()->find((int) $creditorId);
     }
 
     private function salesHaveUtangProofColumns(): bool

@@ -10,6 +10,8 @@ import Table from "../components/ui/Table.vue";
 import api from "../services/api";
 
 const sales = ref([]);
+const customers = ref([]);
+const selectedCustomerId = ref(null);
 const statusFilter = ref("unpaid");
 const searchQuery = ref("");
 const payingNumber = ref("");
@@ -51,6 +53,7 @@ const tickets = computed(() => {
         if (!grouped.has(key)) {
             grouped.set(key, {
                 sale_number: sale.sale_number || "-",
+                creditor_id: sale.creditor_id || null,
                 borrower_name: sale.borrower_name || "-",
                 borrower_phone: sale.borrower_phone || "",
                 due_date: sale.due_date,
@@ -64,6 +67,10 @@ const tickets = computed(() => {
         const ticket = grouped.get(key);
         ticket.items.push(sale);
         ticket.total += Number(sale.total_price || 0);
+
+        if (!ticket.creditor_id && sale.creditor_id) {
+            ticket.creditor_id = sale.creditor_id;
+        }
 
         if (!ticket.borrower_phone && sale.borrower_phone) {
             ticket.borrower_phone = sale.borrower_phone;
@@ -101,6 +108,13 @@ const tickets = computed(() => {
             return false;
         }
 
+        if (
+            selectedCustomerId.value &&
+            ticket.creditor_id !== selectedCustomerId.value
+        ) {
+            return false;
+        }
+
         if (!keyword) {
             return true;
         }
@@ -121,6 +135,16 @@ const tickets = computed(() => {
 const loadUtang = async () => {
     const { data } = await api.get("/utang");
     sales.value = data.data || [];
+};
+
+const loadCustomers = async () => {
+    const { data } = await api.get("/creditors");
+    customers.value = data.data || [];
+};
+
+const selectCustomer = (customer) => {
+    selectedCustomerId.value =
+        selectedCustomerId.value === customer.id ? null : customer.id;
 };
 
 const openTicket = (ticket) => {
@@ -160,10 +184,10 @@ const markPaid = async () => {
         await api.post("/utang/pay", { sale_number: ticket.sale_number });
         pinnedPaid.value = [...pinnedPaid.value, ticket.sale_number];
         pendingTicket.value = null;
-        toast.success("Utang marked as paid.");
+        toast.success("Credit marked as paid.");
         await loadUtang();
     } catch (error) {
-        toast.error(error?.response?.data?.message || "Could not mark this utang as paid.");
+        toast.error(error?.response?.data?.message || "Could not mark this credit as paid.");
     } finally {
         payingNumber.value = "";
     }
@@ -181,7 +205,7 @@ const undoPaid = async (ticket) => {
         pinnedPaid.value = pinnedPaid.value.filter(
             (saleNumber) => saleNumber !== ticket.sale_number,
         );
-        toast.success("Utang payment undone.");
+        toast.success("Credit payment undone.");
         await loadUtang();
     } catch (error) {
         toast.error(error?.response?.data?.message || "Could not undo this payment.");
@@ -194,14 +218,62 @@ watch(statusFilter, () => {
     pinnedPaid.value = [];
 });
 
-onMounted(loadUtang);
+onMounted(() => {
+    loadUtang();
+    loadCustomers();
+});
 </script>
 
 <template>
-    <Head title="Utang" />
+    <Head title="Credit" />
 
-    <AppLayout title="Utang">
+    <AppLayout title="Credit">
         <section class="sales-report-page">
+            <div class="sales-report-filters">
+                <p class="sales-report-meta">Saved customers</p>
+                <p v-if="selectedCustomerId" class="sales-report-meta">
+                    Showing credit for the selected customer.
+                    <button
+                        type="button"
+                        class="btn btn--secondary"
+                        @click="selectedCustomerId = null"
+                    >
+                        Show all
+                    </button>
+                </p>
+            </div>
+            <Table :columns="['Customer', 'Phone', '']">
+                <tr v-if="customers.length === 0">
+                    <td colspan="3" class="sales-report-empty">
+                        Customer details are saved the first time they take credit.
+                    </td>
+                </tr>
+                <tr
+                    v-for="customer in customers"
+                    :key="customer.id"
+                    :class="{
+                        'credit-customer-row--selected':
+                            selectedCustomerId === customer.id,
+                    }"
+                >
+                    <td>{{ customer.name }}</td>
+                    <td>{{ customer.phone || "-" }}</td>
+                    <td>
+                        <Button
+                            variant="outline"
+                            class="products-action-btn"
+                            @click="selectCustomer(customer)"
+                        >
+                            {{
+                                selectedCustomerId === customer.id
+                                    ? "Selected"
+                                    : "Select"
+                            }}
+                        </Button>
+                    </td>
+                </tr>
+            </Table>
+
             <div class="sales-report-filters">
                 <div class="sales-report-filters__group">
                     <label class="sales-report-filter sales-report-filter--search">
@@ -210,7 +282,7 @@ onMounted(loadUtang);
                             v-model="searchQuery"
                             class="input"
                             type="text"
-                            placeholder="Borrower, receipt, or product"
+                            placeholder="Customer, receipt, or product"
                         />
                     </label>
                     <label class="sales-report-filter">
@@ -231,7 +303,7 @@ onMounted(loadUtang);
             <Table
                 :columns="[
                     'Receipt',
-                    'Borrower',
+                    'Customer',
                     'Due date',
                     'Items',
                     'Amount',
@@ -241,7 +313,7 @@ onMounted(loadUtang);
             >
                 <tr v-if="tickets.length === 0">
                     <td colspan="7" class="sales-report-empty">
-                        No utang records match this filter.
+                        No credit records match this filter.
                     </td>
                 </tr>
                 <tr v-for="ticket in tickets" :key="ticket.sale_number">
@@ -312,13 +384,13 @@ onMounted(loadUtang);
 
         <Modal
             :open="selectedTicket !== null"
-            :title="selectedTicket ? `Utang ${selectedTicket.sale_number}` : 'Utang'"
+            :title="selectedTicket ? `Credit ${selectedTicket.sale_number}` : 'Credit'"
             @close="closeTicket"
         >
             <div v-if="selectedTicket" class="utang-detail">
                 <div class="retail-view__grid">
                     <div class="retail-view__item">
-                        <span>Borrower</span>
+                        <span>Customer</span>
                         <strong>{{ selectedTicket.borrower_name }}</strong>
                     </div>
                     <div class="retail-view__item">
@@ -348,14 +420,14 @@ onMounted(loadUtang);
 
         <Modal
             :open="pendingTicket !== null"
-            title="Mark utang as paid"
+            title="Mark credit as paid"
             @close="closeConfirm"
         >
             <div v-if="pendingTicket" class="products-delete-confirm">
                 <div class="products-delete-confirm__head">
                     <CircleCheck class="products-delete-confirm__icon utang-confirm-icon" />
                     <p class="products-delete-confirm__title">
-                        Mark this utang as paid?
+                        Mark this credit as paid?
                     </p>
                 </div>
                 <p class="products-delete-confirm__text">

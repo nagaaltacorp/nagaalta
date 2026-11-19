@@ -57,7 +57,7 @@ const sections = [
         label: "Sales Management",
         items: [
             { label: "Sales Report", href: "/sales-report", icon: BarChart3 },
-            { label: "Utang", href: "/utang", icon: HandCoins },
+            { label: "Credit", href: "/utang", icon: HandCoins },
             {
                 label: "Daily Cashier Reports",
                 href: "/daily-cashier-reports",

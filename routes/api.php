@@ -2,11 +2,13 @@
 
 use App\Http\Controllers\Api\AuthController;
 use App\Http\Controllers\Api\BranchController;
+use App\Http\Controllers\Api\CreditorController;
 use App\Http\Controllers\Api\DailySalesReportController;
 use App\Http\Controllers\Api\DashboardController;
 use App\Http\Controllers\Api\DiscountSetupController;
 use App\Http\Controllers\Api\EmployeeController;
 use App\Http\Controllers\Api\InventoryController;
+use App\Http\Controllers\Api\ProductCategoryController;
 use App\Http\Controllers\Api\ProductController;
 use App\Http\Controllers\Api\ProductVatController;
 use App\Http\Controllers\Api\ProductRetailController;
@@ -41,6 +43,7 @@ Route::get('/flutter/sales', [SaleController::class, 'historyFromFlutter']);
 Route::post('/flutter/sales', [SaleController::class, 'storeFromFlutter']);
 Route::get('/flutter/utang', [UtangController::class, 'flutterIndex']);
 Route::post('/flutter/utang/pay', [UtangController::class, 'markPaid']);
+Route::get('/flutter/creditors', [CreditorController::class, 'flutterIndex']);
 
 Route::post('/products', [ProductController::class, 'store']);
 Route::put('/products/{id}', [ProductController::class, 'update']);
@@ -52,6 +55,7 @@ Route::middleware('web')->group(function () {
     Route::get('/dashboard', [DashboardController::class, 'index']);
     Route::get('/sales', [SaleController::class, 'index']);
     Route::get('/sales/export/{format}', [SaleController::class, 'export']);
+    Route::get('/creditors', [CreditorController::class, 'index']);
     Route::get('/utang', [UtangController::class, 'index']);
     Route::post('/utang/pay', [UtangController::class, 'markPaid']);
     Route::post('/utang/undo', [UtangController::class, 'markUnpaid']);
@@ -61,6 +65,7 @@ Route::middleware('web')->group(function () {
 
     Route::get('/branches', [BranchController::class, 'index']);
     Route::get('/products', [ProductController::class, 'index']);
+    Route::get('/product-categories', [ProductCategoryController::class, 'index']);
     Route::get('/inventories', [InventoryController::class, 'index']);
     Route::get('/inventories/revenue-logs', [InventoryController::class, 'revenueLogs']);
     Route::get('/inventories/main', [InventoryController::class, 'mainIndex']);
@@ -87,6 +92,8 @@ Route::middleware('web')->group(function () {
 
         Route::get('/settings', [SettingsController::class, 'show']);
         Route::put('/settings', [SettingsController::class, 'update']);
+        Route::post('/product-categories', [ProductCategoryController::class, 'store']);
+        Route::delete('/product-categories/{id}', [ProductCategoryController::class, 'destroy']);
         Route::put('/product-vat', [ProductVatController::class, 'update']);
         Route::put('/product-retail', [ProductRetailController::class, 'update']);
 

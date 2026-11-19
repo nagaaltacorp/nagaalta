@@ -63,12 +63,12 @@ class UtangController extends Controller
 
         if ($updated === 0) {
             return response()->json([
-                'message' => 'No unpaid utang was found for that receipt.',
+                'message' => 'No unpaid credit was found for that receipt.',
             ], 422);
         }
 
         return response()->json([
-            'message' => 'Utang marked as paid.',
+            'message' => 'Credit marked as paid.',
             'sale_number' => $saleNumber,
             'paid_lines' => $updated,
         ]);
@@ -92,12 +92,12 @@ class UtangController extends Controller
 
         if ($updated === 0) {
             return response()->json([
-                'message' => 'No paid utang was found for that receipt.',
+                'message' => 'No paid credit was found for that receipt.',
             ], 422);
         }
 
         return response()->json([
-            'message' => 'Utang payment was undone.',
+            'message' => 'Credit payment was undone.',
             'sale_number' => $saleNumber,
             'unpaid_lines' => $updated,
         ]);

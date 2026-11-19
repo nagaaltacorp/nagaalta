@@ -23,6 +23,16 @@ const downloadingId = ref(null);
 let pollTimerId = null;
 let isRefreshing = false;
 
+const paymentMethodLabel = (method) => {
+    const value = String(method || "cash").toLowerCase();
+
+    if (value === "utang") {
+        return "CREDIT";
+    }
+
+    return value.toUpperCase();
+};
+
 const formatMoney = (value) =>
     Number(value || 0).toLocaleString(undefined, {
         minimumFractionDigits: 2,
@@ -430,11 +440,7 @@ onUnmounted(() => {
                                         :key="payment.method"
                                     >
                                         <td>
-                                            {{
-                                                String(
-                                                    payment.method || "cash",
-                                                ).toUpperCase()
-                                            }}
+                                            {{ paymentMethodLabel(payment.method) }}
                                         </td>
                                         <td>{{ payment.count }}</td>
                                         <td>

@@ -4,10 +4,12 @@ namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
 use App\Models\Product;
+use App\Models\ProductCategory;
 use App\Models\User;
 use App\Services\ManagerBranchScope;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Storage;
+use Illuminate\Validation\ValidationException;
 
 class ProductController extends Controller
 {
@@ -124,6 +126,8 @@ class ProductController extends Controller
             $validated['image'] = Storage::url($path);
         }
 
+        $validated['category'] = $this->canonicalCategory($validated['category'] ?? null);
+
         $product = Product::create($validated);
 
         return response()->json([
@@ -153,6 +157,8 @@ class ProductController extends Controller
             $validated['image'] = Storage::url($path);
         }
 
+        $validated['category'] = $this->canonicalCategory($validated['category'] ?? null, $product);
+
         $product->update($validated);
 
         return response()->json([
@@ -171,6 +177,34 @@ class ProductController extends Controller
 
         return response()->json([
             'message' => 'Product deleted successfully.',
+        ]);
+    }
+
+    private function canonicalCategory(?string $category, ?Product $existing = null): ?string
+    {
+        $category = trim((string) $category);
+
+        if ($category === '') {
+            return null;
+        }
+
+        $match = ProductCategory::query()
+            ->whereRaw('LOWER(name) = ?', [mb_strtolower($category)])
+            ->first();
+
+        if ($match) {
+            return $match->name;
+        }
+
+        if (
+            $existing
+            && strcasecmp(trim((string) $existing->category), $category) === 0
+        ) {
+            return $existing->category;
+        }
+
+        throw ValidationException::withMessages([
+            'category' => 'Choose a category from Settings.',
         ]);
     }
 

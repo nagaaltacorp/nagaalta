@@ -1,6 +1,7 @@
 <script setup>
 import { Head } from "@inertiajs/vue3";
-import { computed, onMounted, onUnmounted, ref } from "vue";
+import { ChevronLeft, ChevronRight } from "lucide-vue-next";
+import { computed, onMounted, onUnmounted, ref, watch } from "vue";
 import VueApexCharts from "vue3-apexcharts";
 import AppLayout from "../components/layout/AppLayout.vue";
 import Table from "../components/ui/Table.vue";
@@ -9,6 +10,7 @@ import api from "../services/api";
 const POLL_INTERVAL_MS = 10000;
 const TOP_BAR_LIMIT = 8;
 const TOP_TREND_LIMIT = 5;
+const pageSize = 15;
 const CHART_COLORS = [
     "#16a34a",
     "#65a30d",
@@ -24,6 +26,7 @@ const sales = ref([]);
 const searchQuery = ref("");
 const dateFrom = ref("");
 const dateTo = ref("");
+const currentPage = ref(1);
 let pollTimerId = null;
 let isRefreshing = false;
 
@@ -232,6 +235,36 @@ const productRows = computed(() => {
             rank: index + 1,
         }));
 });
+
+const totalPages = computed(() =>
+    Math.max(1, Math.ceil(productRows.value.length / pageSize)),
+);
+
+const paginatedProductRows = computed(() => {
+    const start = (currentPage.value - 1) * pageSize;
+
+    return productRows.value.slice(start, start + pageSize);
+});
+
+const paginationFrom = computed(() => {
+    if (!productRows.value.length) {
+        return 0;
+    }
+
+    return (currentPage.value - 1) * pageSize + 1;
+});
+
+const paginationTo = computed(() =>
+    Math.min(currentPage.value * pageSize, productRows.value.length),
+);
+
+const pageNumbers = computed(() =>
+    Array.from({ length: totalPages.value }, (_, index) => index + 1),
+);
+
+const goToPage = (page) => {
+    currentPage.value = Math.min(Math.max(page, 1), totalPages.value);
+};
 
 const totalRevenue = computed(() =>
     productRows.value.reduce((sum, row) => sum + row.totalSales, 0),
@@ -455,7 +488,18 @@ const resetFilters = () => {
     searchQuery.value = "";
     dateFrom.value = "";
     dateTo.value = "";
+    currentPage.value = 1;
 };
+
+watch([searchQuery, dateFrom, dateTo], () => {
+    currentPage.value = 1;
+});
+
+watch(totalPages, (pages) => {
+    if (currentPage.value > pages) {
+        currentPage.value = pages;
+    }
+});
 
 const loadSales = async () => {
     if (isRefreshing) {
@@ -674,7 +718,7 @@ onUnmounted(() => {
                     </tr>
 
                     <tr
-                        v-for="row in productRows"
+                        v-for="row in paginatedProductRows"
                         :key="row.id"
                         :class="{
                             'profit-analysis-row--top': row.rank === 1,
@@ -716,6 +760,52 @@ onUnmounted(() => {
                         </td>
                     </tr>
                 </Table>
+
+                <div
+                    v-if="productRows.length > 0"
+                    class="products-pagination"
+                >
+                    <p class="products-pagination-info">
+                        Showing {{ paginationFrom }}-{{ paginationTo }} of
+                        {{ productRows.length }} products
+                    </p>
+
+                    <div class="products-pagination-controls">
+                        <button
+                            type="button"
+                            class="products-page-btn"
+                            :disabled="currentPage === 1"
+                            @click="goToPage(currentPage - 1)"
+                        >
+                            <ChevronLeft class="products-btn-icon" />
+                            <span>Prev</span>
+                        </button>
+
+                        <button
+                            v-for="page in pageNumbers"
+                            :key="page"
+                            type="button"
+                            class="products-page-btn products-page-btn--number"
+                            :class="{
+                                'products-page-btn--active':
+                                    currentPage === page,
+                            }"
+                            @click="goToPage(page)"
+                        >
+                            {{ page }}
+                        </button>
+
+                        <button
+                            type="button"
+                            class="products-page-btn"
+                            :disabled="currentPage === totalPages"
+                            @click="goToPage(currentPage + 1)"
+                        >
+                            <span>Next</span>
+                            <ChevronRight class="products-btn-icon" />
+                        </button>
+                    </div>
+                </div>
 
                 <div class="report-total">
                     Most Bought:

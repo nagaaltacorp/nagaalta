@@ -21,6 +21,7 @@ import {
     ref,
     watch,
 } from "vue";
+import { toast } from "vue-sonner";
 import AppLayout from "../components/layout/AppLayout.vue";
 import Button from "../components/ui/Button.vue";
 import Input from "../components/ui/Input.vue";
@@ -29,6 +30,7 @@ import Table from "../components/ui/Table.vue";
 import api from "../services/api";
 
 const products = ref([]);
+const categories = ref([]);
 const showModal = ref(false);
 const showDeleteModal = ref(false);
 const editingId = ref(null);
@@ -82,6 +84,25 @@ const loadProducts = async () => {
     const { data } = await api.get("/products");
     products.value = data.data;
 };
+
+const loadCategories = async () => {
+    const { data } = await api.get("/product-categories");
+    categories.value = (data.data || []).map((category) => category.name);
+};
+
+const categoryOptions = computed(() => {
+    const names = [...categories.value];
+    const current = String(form.category || "").trim();
+
+    if (
+        current &&
+        !names.some((name) => name.toLowerCase() === current.toLowerCase())
+    ) {
+        names.push(current);
+    }
+
+    return names;
+});
 
 const hasDigits = (value) => /\d/.test(value);
 
@@ -354,7 +375,11 @@ const openCreate = () => {
 
 const openEdit = (product) => {
     form.name = product.name;
-    form.category = product.category ?? "";
+    const currentCategory = product.category ?? "";
+    const match = categories.value.find(
+        (name) => name.toLowerCase() === String(currentCategory).trim().toLowerCase(),
+    );
+    form.category = match || currentCategory;
     form.company_name = product.company_name ?? "";
     const parsedUnit = splitUnit(product.unit ?? "pcs");
     form.unitSize = parsedUnit.size;
@@ -407,6 +432,12 @@ const saveProduct = async () => {
         showModal.value = false;
         resetForm();
         await loadProducts();
+    } catch (error) {
+        toast.error(
+            error?.response?.data?.errors?.category?.[0] ||
+                error?.response?.data?.message ||
+                "Could not save this product.",
+        );
     } finally {
         isSaving.value = false;
     }
@@ -455,7 +486,10 @@ const confirmDelete = async () => {
     closeDeleteModal();
 };
 
-onMounted(loadProducts);
+onMounted(() => {
+    loadProducts();
+    loadCategories();
+});
 
 onBeforeUnmount(() => {
     clearImagePreview();
@@ -708,11 +742,25 @@ onBeforeUnmount(() => {
                             label="Company"
                             placeholder="Company name"
                         />
-                        <Input
-                            v-model="form.category"
-                            label="Category"
-                            placeholder="e.g. Seeds, Fertilizer"
-                        />
+                        <label class="form-field">
+                            <span class="form-field__label">Category</span>
+                            <select v-model="form.category" class="input">
+                                <option value="">Select category</option>
+                                <option
+                                    v-for="category in categoryOptions"
+                                    :key="category"
+                                    :value="category"
+                                >
+                                    {{ category }}
+                                </option>
+                            </select>
+                            <span
+                                v-if="categories.length === 0"
+                                class="settings-note"
+                            >
+                                No categories yet. An admin can add them in Settings.
+                            </span>
+                        </label>
                         <label class="form-field">
                             <span class="form-field__label">Unit</span>
                             <span class="products-unit">

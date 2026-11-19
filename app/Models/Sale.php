@@ -24,6 +24,7 @@ class Sale extends Model
         'discount_amount',
         'total_price',
         'payment_method',
+        'creditor_id',
         'borrower_name',
         'borrower_phone',
         'valid_id_path',
@@ -54,6 +55,7 @@ class Sale extends Model
         'due_date' => 'date',
         'paid_at' => 'datetime',
         'processed_by_user_id' => 'integer',
+        'creditor_id' => 'integer',
         'replaces_sale_id' => 'integer',
         'replaced_by_sale_id' => 'integer',
     ];

@@ -155,8 +155,10 @@ class DailySalesReportService
             $pdf->row(['Method', 'Count', 'Amount'], [160, 80, 120], true);
 
             foreach ($payments as $payment) {
+                $method = strtolower((string) ($payment['method'] ?? 'cash'));
+
                 $pdf->row([
-                    strtoupper((string) ($payment['method'] ?? 'cash')),
+                    $method === 'utang' ? 'CREDIT' : strtoupper($method),
                     (string) ($payment['count'] ?? 0),
                     self::money($payment['amount'] ?? 0),
                 ], [160, 80, 120]);

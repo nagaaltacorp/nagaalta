@@ -259,7 +259,7 @@ onUnmounted(() => {
                             <select v-model="paymentFilter" class="input">
                                 <option value="all">All payments</option>
                                 <option value="cash">Cash and other</option>
-                                <option value="utang">Utang paid</option>
+                                <option value="utang">Credit paid</option>
                             </select>
                         </label>
                     </div>
@@ -327,7 +327,7 @@ onUnmounted(() => {
                                 v-if="sale.payment_method === 'utang'"
                                 class="sales-report-flag"
                             >
-                                {{ sale.paid_at ? "Utang paid" : "Utang" }}
+                                {{ sale.paid_at ? "Credit paid" : "Credit" }}
                             </span>
                             <span
                                 v-if="sale.is_replacement"
